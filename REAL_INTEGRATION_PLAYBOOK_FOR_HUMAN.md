@@ -4,12 +4,14 @@
 
 ## 결론
 네, **실 연동(실 API 키/실 DB/운영 승인)은 사람(사용자)이 직접** 수행해야 합니다.
-이 저장소는 그 전에 필요한 구조/검증/프로토타입을 준비한 상태입니다.
+그리고 질문하신 것처럼 `.env`만 만들고 테스트 한 번으로 끝나지는 않습니다.
+`.env`는 시작점이고, 연결성/권한/데이터 품질/운영 체크를 순서대로 통과해야 합니다.
 
 ## Step-by-step
 1. **Python 환경 준비**
    - `python -m venv .venv && source .venv/bin/activate`
    - `pip install -r requirements.txt`
+   - `.env.example`를 복사해 `.env` 생성 후 값 입력
 
 2. **실 서비스 준비**
    - Neo4j 인스턴스 생성 (Aura 또는 사내)
@@ -38,12 +40,14 @@
      - 재무/리스크 노드에서 위 structured extractor 사용
 
 5. **실행 검증**
+   - `python scripts/preflight_check.py`  # env 필수값 점검
    - `pytest -q`
    - `python scripts/audit_project.py`
    - `uvicorn app.main:app --reload --port 8000`
    - `frontend_prototype/index.html`에서 실제 요청/스트리밍 확인
 
 6. **운영 전 체크리스트 (필수)**
+   - DB/LLM 계정 권한 확인(읽기/쓰기/API quota)
    - 보안 점검(키 노출/로그 마스킹)
    - 컴플라이언스 점검(금융 규정/로그 보관)
    - 성능 점검(TTFU, P95 latency)

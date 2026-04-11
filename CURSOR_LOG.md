@@ -14,6 +14,10 @@
     - 실제 검색 클라이언트 (`app/retrieval/real_clients.py`)
     - LLM Structured 어댑터 (`app/agents/llm_structured.py`)
     - 노드/검색 라우터를 실연동 모드로 확장 (`app/agents/nodes.py`, `app/retrieval/query_router.py`)
+  - 환경 설정 온보딩 강화:
+    - `.env.example` 추가
+    - `scripts/preflight_check.py` 추가
+    - 연동 플레이북에 \"env만으로는 불충분\" 체크리스트 반영
 - 사람이 해야 할 작업 분리 문서(`HUMAN_REQUIRED_TASKS.md`) 유지 및 재확인.
 
 ## [자체 평가 & 잠재 리스크]

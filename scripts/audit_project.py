@@ -32,6 +32,8 @@ def main() -> None:
         Check("UX/UI master plan", Path("UX_UI_MASTER_PLAN.md")),
         Check("Frontend prototype", Path("frontend_prototype/index.html")),
         Check("Human integration playbook", Path("REAL_INTEGRATION_PLAYBOOK_FOR_HUMAN.md")),
+        Check("Environment template", Path(".env.example")),
+        Check("Preflight checker", Path("scripts/preflight_check.py")),
     ]
 
     passed = sum(1 for c in checks if c.passed())

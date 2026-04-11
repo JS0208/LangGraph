@@ -1,0 +1,15 @@
+{
+  "companies": [
+    {
+      "name": "카카오",
+      "year": 2024,
+      "quarter": "Q3",
+      "revenue": 210000,
+      "operating_profit": 12000,
+      "debt_ratio": 168.5,
+      "disclosures": [
+        {"date": "2024-10-10", "event_type": "REGULATION", "summary": "카카오게임즈 규제 조사 진행"}
+      ]
+    }
+  ]
+}

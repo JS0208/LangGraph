@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict
 
+from app.agents.llm_structured import extract_finance_metrics, extract_risk_points
 from app.retrieval.query_router import hybrid_retrieve
 from app.state import GraphState
 
@@ -12,10 +13,8 @@ async def retrieve_context_node(state: GraphState) -> Dict[str, Any]:
 
 
 async def finance_analyst_node(state: GraphState) -> Dict[str, Any]:
-    raw = state.get("retrieved_context", {}).get("raw", {})
-    debt_ratio = raw.get("debt_ratio", 0)
-    insight = "부채비율 안정" if debt_ratio < 150 else "부채비율 상승으로 재무 리스크 존재"
-    payload = {"debt_ratio": debt_ratio, "insight": insight}
+    context = state.get("retrieved_context", {})
+    payload = await extract_finance_metrics(context)
     return {
         "finance_metrics": payload,
         "messages": [{"role": "finance_analyst", "content": str(payload)}],
@@ -24,8 +23,8 @@ async def finance_analyst_node(state: GraphState) -> Dict[str, Any]:
 
 
 async def risk_compliance_node(state: GraphState) -> Dict[str, Any]:
-    disclosures: List[Dict[str, Any]] = state.get("retrieved_context", {}).get("raw", {}).get("disclosures", [])
-    risks = [f"{d.get('event_type')}: {d.get('summary')}" for d in disclosures] or ["중대 공시 리스크 미탐지"]
+    context = state.get("retrieved_context", {})
+    risks = await extract_risk_points(context)
     return {
         "risk_points": risks,
         "messages": [{"role": "risk_compliance", "content": "; ".join(risks)}],

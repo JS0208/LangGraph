@@ -9,6 +9,7 @@
 - [완료] Fallback 데이터 경로 미구현.
 - [완료] LangGraph 미설치 시 실행 불가 리스크.
 - [완료] 최소 자동 검증(테스트) 부재.
+- [완료] 실 연동 확장 포인트 미반영 문제.
 
 ## 3. Execution Plan and Status
 1) 코어 상태 모델 구현 (`app/state.py`) — **100%**  
@@ -18,6 +19,7 @@
 5) 로컬 데모/오프라인 실행 보강 (`scripts/run_local_demo.py`, fallback graph) — **100%**  
 6) 자동 검증 테스트 (`tests/test_*.py`) — **100%**  
 7) 작업 로그/사람 작업 분리 (`CURSOR_LOG.md`, `HUMAN_REQUIRED_TASKS.md`) — **100%**
+8) 실 연동 확장 코드 반영 (`app/config.py`, `app/retrieval/real_clients.py`, `app/agents/llm_structured.py`) — **100%**
 
 ## 4. Done Definition
 - 질의 입력 시 상태 기반 분석 파이프라인 동작.

@@ -25,10 +25,17 @@
      - `QDRANT_API_KEY=...`
      - `LLM_API_KEY=...`
 
-4. **실 연동 코드 확장 포인트**
-   - `app/retrieval/query_router.py`: seed fallback 대신 실제 Qdrant/Neo4j 조회 로직 추가
-   - `app/agents/nodes.py`: mock 분석 로직 대신 실제 LLM structured output 연결
-   - `app/api/endpoints.py`: 이벤트 스키마/timeout/retry 정책 운영 수준으로 고도화
+4. **실 연동 코드 확장 포인트 (이번 커밋 기준 반영 완료)**
+   - `app/retrieval/query_router.py`:  
+     - `settings.has_real_retrieval`가 true면 Qdrant/Neo4j 실제 조회 호출
+     - 실패 시 즉시 seed fallback 전환
+   - `app/retrieval/real_clients.py`:  
+     - Qdrant 검색 + Neo4j 2-hop 조회 함수 구현
+   - `app/agents/llm_structured.py`:  
+     - `settings.has_real_llm`가 true면 실제 LLM 엔드포인트 호출
+     - false면 deterministic fallback 분석 반환
+   - `app/agents/nodes.py`:  
+     - 재무/리스크 노드에서 위 structured extractor 사용
 
 5. **실행 검증**
    - `pytest -q`

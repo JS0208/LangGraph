@@ -4,6 +4,7 @@ import asyncio
 
 from app.agents.graph import LocalFallbackGraph, build_graph
 from app.retrieval.query_router import hybrid_retrieve
+from app.retrieval.real_clients import extract_company_year
 
 
 def test_hybrid_retrieve_has_stable_shape():
@@ -40,3 +41,9 @@ def test_fallback_graph_astream_runs_end_to_end():
 def test_build_graph_returns_graph_like_object():
     graph = build_graph()
     assert hasattr(graph, "astream")
+
+
+def test_extract_company_year_from_query():
+    company, year = extract_company_year("카카오 2024년 리스크 알려줘")
+    assert company == "카카오"
+    assert year == 2024

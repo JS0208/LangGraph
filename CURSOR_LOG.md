@@ -9,6 +9,11 @@
   - 완성형 기획서/진행 대시보드/감사 스크립트 추가 (`PERFECT_PRODUCT_PLAN.md`, `PROGRESS_DASHBOARD.md`, `scripts/audit_project.py`)
   - UX/UI 전문가 관점 기획 및 프로토타입 추가 (`UX_UI_MASTER_PLAN.md`, `frontend_prototype/index.html`)
   - 사람 실연동 절차서 추가 (`REAL_INTEGRATION_PLAYBOOK_FOR_HUMAN.md`)
+  - 실 연동 코드 확장 포인트 반영:
+    - 환경설정 모듈 (`app/config.py`)
+    - 실제 검색 클라이언트 (`app/retrieval/real_clients.py`)
+    - LLM Structured 어댑터 (`app/agents/llm_structured.py`)
+    - 노드/검색 라우터를 실연동 모드로 확장 (`app/agents/nodes.py`, `app/retrieval/query_router.py`)
 - 사람이 해야 할 작업 분리 문서(`HUMAN_REQUIRED_TASKS.md`) 유지 및 재확인.
 
 ## [자체 평가 & 잠재 리스크]

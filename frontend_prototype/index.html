@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GraphRAG UX Prototype</title>
+    <style>
+      body { font-family: Inter, system-ui, sans-serif; margin: 0; background: #0b1020; color: #e9eefc; }
+      .wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; min-height: 100vh; }
+      .panel { background: #131a2f; border: 1px solid #26314f; border-radius: 12px; padding: 16px; }
+      .row { display: flex; gap: 8px; }
+      input, button { border-radius: 8px; border: 1px solid #31426f; background: #0f1630; color: #fff; padding: 10px; }
+      input { flex: 1; }
+      button { cursor: pointer; }
+      .badge { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 12px; }
+      .b-fin { background: #1f4fff; }
+      .b-risk { background: #b32424; }
+      .b-orch { background: #7c3aed; }
+      .b-sys { background: #c08400; }
+      .log, .timeline { max-height: 65vh; overflow: auto; border: 1px solid #2a385f; border-radius: 8px; padding: 8px; margin-top: 8px; }
+      .card { border: 1px solid #2d3d67; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+      .muted { color: #9fb0dd; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section class="panel">
+        <h2>입력 & 실시간 로그</h2>
+        <div class="row">
+          <input id="query" value="카카오 2024년 3분기 실적과 자회사 규제 리스크를 분석해줘" />
+          <button id="startBtn">분석 시작</button>
+        </div>
+        <p class="muted">상태: <span id="status">대기</span></p>
+        <div id="log" class="log"></div>
+      </section>
+
+      <section class="panel">
+        <h2>결과 패널</h2>
+        <div id="summary" class="card">최종 결론 대기 중...</div>
+        <div id="finance" class="card">재무 지표 대기 중...</div>
+        <div id="risk" class="card">리스크 포인트 대기 중...</div>
+        <h3>이벤트 타임라인</h3>
+        <div id="timeline" class="timeline"></div>
+      </section>
+    </div>
+
+    <script>
+      const API_BASE = window.API_BASE || "http://localhost:8000";
+      const statusEl = document.getElementById("status");
+      const logEl = document.getElementById("log");
+      const timelineEl = document.getElementById("timeline");
+      const summaryEl = document.getElementById("summary");
+      const financeEl = document.getElementById("finance");
+      const riskEl = document.getElementById("risk");
+
+      function append(container, html) {
+        const d = document.createElement("div");
+        d.className = "card";
+        d.innerHTML = html;
+        container.prepend(d);
+      }
+
+      function badge(node) {
+        if (node.includes("finance")) return '<span class="badge b-fin">FINANCE</span>';
+        if (node.includes("risk")) return '<span class="badge b-risk">RISK</span>';
+        if (node.includes("orchestrator")) return '<span class="badge b-orch">ORCH</span>';
+        return '<span class="badge b-sys">SYSTEM</span>';
+      }
+
+      document.getElementById("startBtn").addEventListener("click", async () => {
+        statusEl.textContent = "시작 요청 중";
+        logEl.innerHTML = "";
+        timelineEl.innerHTML = "";
+        summaryEl.textContent = "최종 결론 대기 중...";
+        financeEl.textContent = "재무 지표 대기 중...";
+        riskEl.textContent = "리스크 포인트 대기 중...";
+
+        const query = document.getElementById("query").value;
+        const resp = await fetch(`${API_BASE}/api/v1/analyze/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+        });
+        const data = await resp.json();
+        const threadId = data.thread_id;
+
+        statusEl.textContent = `스트리밍 중 (${threadId})`;
+
+        const es = new EventSource(`${API_BASE}/api/v1/analyze/stream/${threadId}`);
+        es.onmessage = (ev) => {
+          const payload = JSON.parse(ev.data);
+          const [node, value] = Object.entries(payload)[0] || ["system", payload];
+          append(logEl, `${badge(node)} <pre>${JSON.stringify(value, null, 2)}</pre>`);
+          append(timelineEl, `<b>${new Date().toLocaleTimeString()}</b> - ${node}`);
+
+          if (node === "finance_analyst") financeEl.innerHTML = `<h4>재무 지표</h4><pre>${JSON.stringify(value.finance_metrics, null, 2)}</pre>`;
+          if (node === "risk_compliance") riskEl.innerHTML = `<h4>리스크</h4><pre>${JSON.stringify(value.risk_points, null, 2)}</pre>`;
+          if (node === "orchestrator" || node === "generate_final_report") {
+            summaryEl.innerHTML = `<h4>합의/최종</h4><pre>${JSON.stringify(value, null, 2)}</pre>`;
+          }
+        };
+        es.onerror = () => {
+          statusEl.textContent = "스트리밍 오류(재시도 필요)";
+          append(logEl, `${badge("system")} SSE 연결 오류`);
+          es.close();
+        };
+      });
+    </script>
+  </body>
+</html>

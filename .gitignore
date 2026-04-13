@@ -1,2 +1,11 @@
 __pycache__/
 *.pyc
+.env
+scripts/.env
+.venv/
+.pytest_cache/
+docs_cache/
+frontend_app/node_modules/
+frontend_app/.next/
+frontend_app/.env.local
+*.pdf

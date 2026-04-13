@@ -1,4 +1,4 @@
-1. 핵심 데이터 스키마 및 상태(State) 정의
+# 1. Data Schema and State
 
 [CURSOR AI 작업 지침]
 이 문서는 GraphRAG 파이프라인과 LangGraph 에이전트 간의 데이터 흐름을 통제하는 '절대적인 스키마 표준'이다.

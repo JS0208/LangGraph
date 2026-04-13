@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+from dotenv import load_dotenv  # 추가: dotenv 라이브러리 호출
+
+load_dotenv()  # 추가: .env 파일을 읽어서 시스템 환경 변수로 주입
 
 REQUIRED = [
     "NEO4J_URI",

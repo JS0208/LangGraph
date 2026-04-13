@@ -1,11 +1,15 @@
-3. LangGraph 기반 오케스트레이션 엔진 명세 (핵심 로직)
+# 3. LangGraph Orchestration
 
 [CURSOR AI 작업 지침]
 이 문서는 LangGraph를 활용한 다중 에이전트(Multi-Agent) 턴제 토론 시스템의 아키텍처 명세다. LLM 에이전트들은 자유도를 주면 서로 의미 없는 대화를 반복하며 무한 루프(Deadlock)에 빠지기 쉽다. 따라서 아래 명시된 **'엄격한 라우팅 규칙'**과 '구조화된 출력(Structured Output)' 원칙을 절대적으로 준수하여 코드를 작성하라.
 
+[현재 구현 메모]
+- `app/agents/graph.py`는 `langgraph`가 설치되어 있으면 실제 `StateGraph`를, 아니면 `LocalFallbackGraph`를 사용한다.
+- 실제 LangGraph 경로에서는 `MemorySaver()` 체크포인터를 사용하고, fallback 경로에서는 동일한 흐름을 간단한 로컬 실행기로 재현한다.
+
 3.1. 에이전트 노드(Node) 정의 및 역할 (app/agents/nodes.py)
 
-각 노드는 docs/1_Data_Schema_and_State.md에 정의된 GraphState를 입력으로 받고, 상태를 업데이트할 Dictionary를 반환하는 Python 비동기 함수(async def)로 구현하라.
+각 노드는 `1_Data_Schema_and_State.md`에 정의된 GraphState를 입력으로 받고, 상태를 업데이트할 Dictionary를 반환하는 Python 비동기 함수(async def)로 구현하라.
 
 1. finance_analyst_node (재무 분석가)
 

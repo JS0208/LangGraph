@@ -9,6 +9,9 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+# 파서 임포트
+from app.retrieval.real_clients import extract_company_year
+
 router = APIRouter(prefix="/api/v1/analyze", tags=["analyze"])
 THREADS: Dict[str, str] = {}
 
@@ -34,10 +37,15 @@ async def stream_analysis(thread_id: str) -> StreamingResponse:
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
             from app.agents.graph import build_graph
+            
+            # [추가됨] 그래프 진입 전 엔티티 1회 파싱
+            company, year = extract_company_year(query)
 
             graph = build_graph()
             init_state = {
                 "user_query": query,
+                "target_company": company, # [추가됨] 절대 엔티티 고정
+                "target_year": year,       # [추가됨] 절대 연도 고정
                 "messages": [],
                 "turn_count": 0,
                 "retrieved_context": {},
@@ -52,10 +60,14 @@ async def stream_analysis(thread_id: str) -> StreamingResponse:
                 try:
                     update = await asyncio.wait_for(anext(stream), timeout=30)
                 except StopAsyncIteration:
+                    yield "data: [DONE]\n\n"
                     break
                 yield f"data: {json.dumps(update, ensure_ascii=False)}\n\n"
-        except Exception:
-            fallback = {"node": "system", "status": "error", "message": "[Fallback] AI 분석 지연 또는 오류로 기본 리스크 시나리오를 반환합니다."}
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            fallback = {"system": {"status": "error", "message": f"[Fallback] AI 호출 오류: {str(e)}"}}
             yield f"data: {json.dumps(fallback, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

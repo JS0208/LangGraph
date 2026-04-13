@@ -12,6 +12,8 @@ def test_hybrid_retrieve_has_stable_shape():
     assert "vector_results" in result
     assert "graph_results" in result
     assert "raw" in result
+    assert "analysis_context" in result
+    assert "mode" in result
 
 
 def test_fallback_graph_astream_runs_end_to_end():
@@ -47,3 +49,9 @@ def test_extract_company_year_from_query():
     company, year = extract_company_year("카카오 2024년 리스크 알려줘")
     assert company == "카카오"
     assert year == 2024
+
+
+def test_extract_company_year_from_alias_query():
+    company, year = extract_company_year("SK hynix 2025 outlook")
+    assert company == "SK하이닉스"
+    assert year == 2025

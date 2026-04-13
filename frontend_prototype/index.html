@@ -52,6 +52,9 @@
       const summaryEl = document.getElementById("summary");
       const financeEl = document.getElementById("finance");
       const riskEl = document.getElementById("risk");
+      const startBtn = document.getElementById("startBtn");
+
+      let currentEventSource = null;
 
       function append(container, html) {
         const d = document.createElement("div");
@@ -67,7 +70,16 @@
         return '<span class="badge b-sys">SYSTEM</span>';
       }
 
-      document.getElementById("startBtn").addEventListener("click", async () => {
+      startBtn.addEventListener("click", async () => {
+        if (startBtn.disabled) return;
+        startBtn.disabled = true;
+        startBtn.textContent = "분석 중...";
+        
+        if (currentEventSource) {
+          currentEventSource.close();
+          currentEventSource = null;
+        }
+
         statusEl.textContent = "시작 요청 중";
         logEl.innerHTML = "";
         timelineEl.innerHTML = "";
@@ -75,35 +87,53 @@
         financeEl.textContent = "재무 지표 대기 중...";
         riskEl.textContent = "리스크 포인트 대기 중...";
 
-        const query = document.getElementById("query").value;
-        const resp = await fetch(`${API_BASE}/api/v1/analyze/start`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query }),
-        });
-        const data = await resp.json();
-        const threadId = data.thread_id;
+        try {
+          const query = document.getElementById("query").value;
+          const resp = await fetch(`${API_BASE}/api/v1/analyze/start`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query }),
+          });
+          const data = await resp.json();
+          const threadId = data.thread_id;
 
-        statusEl.textContent = `스트리밍 중 (${threadId})`;
+          statusEl.textContent = `스트리밍 중 (${threadId})`;
 
-        const es = new EventSource(`${API_BASE}/api/v1/analyze/stream/${threadId}`);
-        es.onmessage = (ev) => {
-          const payload = JSON.parse(ev.data);
-          const [node, value] = Object.entries(payload)[0] || ["system", payload];
-          append(logEl, `${badge(node)} <pre>${JSON.stringify(value, null, 2)}</pre>`);
-          append(timelineEl, `<b>${new Date().toLocaleTimeString()}</b> - ${node}`);
+          currentEventSource = new EventSource(`${API_BASE}/api/v1/analyze/stream/${threadId}`);
+          
+          currentEventSource.onmessage = (ev) => {
+            if (ev.data === "[DONE]") {
+              statusEl.textContent = "분석 완료";
+              startBtn.disabled = false;
+              startBtn.textContent = "분석 시작";
+              currentEventSource.close();
+              return;
+            }
 
-          if (node === "finance_analyst") financeEl.innerHTML = `<h4>재무 지표</h4><pre>${JSON.stringify(value.finance_metrics, null, 2)}</pre>`;
-          if (node === "risk_compliance") riskEl.innerHTML = `<h4>리스크</h4><pre>${JSON.stringify(value.risk_points, null, 2)}</pre>`;
-          if (node === "orchestrator" || node === "generate_final_report") {
-            summaryEl.innerHTML = `<h4>합의/최종</h4><pre>${JSON.stringify(value, null, 2)}</pre>`;
-          }
-        };
-        es.onerror = () => {
-          statusEl.textContent = "스트리밍 오류(재시도 필요)";
-          append(logEl, `${badge("system")} SSE 연결 오류`);
-          es.close();
-        };
+            const payload = JSON.parse(ev.data);
+            const [node, value] = Object.entries(payload)[0] || ["system", payload];
+            append(logEl, `${badge(node)} <pre>${JSON.stringify(value, null, 2)}</pre>`);
+            append(timelineEl, `<b>${new Date().toLocaleTimeString()}</b> - ${node}`);
+
+            if (node === "finance_analyst") financeEl.innerHTML = `<h4>재무 지표</h4><pre>${JSON.stringify(value.finance_metrics, null, 2)}</pre>`;
+            if (node === "risk_compliance") riskEl.innerHTML = `<h4>리스크</h4><pre>${JSON.stringify(value.risk_points, null, 2)}</pre>`;
+            if (node === "orchestrator" || node === "generate_final_report") {
+              summaryEl.innerHTML = `<h4>합의/최종</h4><pre>${JSON.stringify(value, null, 2)}</pre>`;
+            }
+          };
+          
+          currentEventSource.onerror = () => {
+            statusEl.textContent = "스트리밍 오류(재시도 필요)";
+            append(logEl, `${badge("system")} SSE 연결 오류`);
+            startBtn.disabled = false;
+            startBtn.textContent = "분석 시작";
+            currentEventSource.close();
+          };
+        } catch (error) {
+          statusEl.textContent = "서버 요청 실패";
+          startBtn.disabled = false;
+          startBtn.textContent = "분석 시작";
+        }
       });
     </script>
   </body>

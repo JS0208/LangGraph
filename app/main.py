@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.endpoints import router
+from app.retrieval.real_clients import extract_company_year # 파서 임포트
 
 
 @asynccontextmanager
@@ -30,6 +31,7 @@ async def cli_demo() -> None:
 
     graph = build_graph()
     query = input("질의를 입력하세요: ").strip()
+    company, year = extract_company_year(query)
     state = {
         "user_query": query,
         "messages": [],

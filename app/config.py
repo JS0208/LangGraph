@@ -1,8 +1,8 @@
 from __future__ import annotations
-
+from dotenv import load_dotenv
 import os
 from dataclasses import dataclass
-
+load_dotenv() # 이 함수가 명시적으로 호출되어야 함
 
 @dataclass(frozen=True)
 class Settings:

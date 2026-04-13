@@ -1,8 +1,12 @@
-2. GraphRAG 파이프라인 명세 (데이터 수집 및 적재)
+# 2. GraphRAG Pipeline
 
 [CURSOR AI 작업 지침]
 이 문서는 DART API에서 데이터를 가져와 Neo4j(지식 그래프)와 Qdrant(벡터 DB)에 적재하고, 사용자 질의 시 두 DB를 병합 검색(Hybrid Search)하는 데이터 파이프라인 명세다.
 이 구간은 네트워크 I/O 및 파싱 에러가 가장 빈번하게 발생하는 '지뢰밭'이다. 따라서 1인 개발 체제의 속도를 유지하기 위해 모든 외부 통신 구간에 'Fall-back(예외 우회)' 로직을 강제한다.
+
+[현재 구현 메모]
+- `app/retrieval/query_router.py`는 실연동이 가능하면 Qdrant/Neo4j를 조회하고, 실패하면 즉시 seed 데이터로 fallback한다.
+- `scripts/real_ingest.py`는 실데이터 적재용 스크립트이며 `DART_API_KEY`, DB 자격 증명, LLM 키가 준비되어 있어야 한다.
 
 2.1. DART Open API 연동 및 파서 (app/retrieval/dart_parser.py)
 
@@ -24,7 +28,7 @@ DART API의 Rate Limit에 걸리거나, JSON/XML 파싱 구조가 변경되어 K
 
 Graph Extraction (LLM Structured Output):
 
-LLM(Gemini 2.5 Pro 또는 Claude 3.5 Sonnet)에 텍스트 청크를 입력하여 docs/1_Data_Schema_and_State.md에 정의된 스키마 형식(Company, Subsidiary, FinancialReport, Disclosure)의 JSON 배열만 반환하도록 프롬프트를 구성하라.
+LLM(Gemini 2.5 Pro 또는 Claude 3.5 Sonnet)에 텍스트 청크를 입력하여 `1_Data_Schema_and_State.md`에 정의된 스키마 형식(Company, Subsidiary, FinancialReport, Disclosure)의 JSON 배열만 반환하도록 프롬프트를 구성하라.
 
 추출된 JSON을 Neo4j Cypher 쿼리로 변환하는 json_to_cypher() 함수를 작성하되, 중복 노드 생성을 방지하기 위해 CREATE 대신 MERGE 구문을 사용하라.
 

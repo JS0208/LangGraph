@@ -1,4 +1,6 @@
-# Real Integration Playbook (Human-Executed)
+# 10. Real Integration Playbook
+
+## 목적
 
 아래는 질문하신 "실 연동은 내가 직접해야 하는가?"에 대한 구체 절차입니다.
 
@@ -7,9 +9,10 @@
 그리고 질문하신 것처럼 `.env`만 만들고 테스트 한 번으로 끝나지는 않습니다.
 `.env`는 시작점이고, 연결성/권한/데이터 품질/운영 체크를 순서대로 통과해야 합니다.
 
-## Step-by-step
+## 실행 절차
 1. **Python 환경 준비**
-   - `python -m venv .venv && source .venv/bin/activate`
+   - Windows: `python -m venv .venv` 후 `.venv\Scripts\activate`
+   - macOS/Linux: `python -m venv .venv && source .venv/bin/activate`
    - `pip install -r requirements.txt`
    - `.env.example`를 복사해 `.env` 생성 후 값 입력
 
@@ -20,14 +23,16 @@
 
 3. **시크릿 주입**
    - 예시 환경변수(실제 값으로 교체):
+     - `DART_API_KEY=...`
      - `NEO4J_URI=...`
      - `NEO4J_USER=...`
      - `NEO4J_PASSWORD=...`
      - `QDRANT_URL=...`
      - `QDRANT_API_KEY=...`
      - `LLM_API_KEY=...`
+     - `NEXT_PUBLIC_API_URL=...`  # 필요 시 프론트엔드용
 
-4. **실 연동 코드 확장 포인트 (이번 커밋 기준 반영 완료)**
+4. **실 연동 코드 확장 포인트**
    - `app/retrieval/query_router.py`:  
      - `settings.has_real_retrieval`가 true면 Qdrant/Neo4j 실제 조회 호출
      - 실패 시 즉시 seed fallback 전환
@@ -52,3 +57,9 @@
    - 컴플라이언스 점검(금융 규정/로그 보관)
    - 성능 점검(TTFU, P95 latency)
    - 장애 대응(Fallback/재시도/알람)
+
+## 연결 문서
+
+- 사람 전용 승인/운영 작업: `9_Human_Required_Tasks.md`
+- 전체 상태와 다음 작업: `6_Project_Status_and_Next_Steps.md`
+- 실행 기준: `8_Runtime_Runbook.md`

@@ -23,10 +23,15 @@
 
 ## 다음 작업
 
-1. 실 DB/LLM 연결 상태에서 통합 테스트 시나리오 정리
-2. SSE 이벤트 스키마를 프론트엔드 계약 문서로 고정
-3. `scripts/real_ingest.py` 운영 기준과 실패 대응 절차 정리
-4. 배포 파이프라인, 시크릿 관리, 보안 점검 체계 추가
+> Upgrade Master Plan(`14_Upgrade_Master_Plan.md`) Sprint 0 ~ 6 + post-MVP 핵심 슬라이스가 모두 도입되었다. 잔여는 외부 의존/실연동 검증 단계.
+
+1. **RAGAS 진짜 통합**: `requirements.txt` 에 `ragas`, `datasets` 추가 → `eval/run_eval.py --ragas` 옵션. CI 게이팅 임계 상향 (지금은 휴리스틱 유사 메트릭만 보고).
+2. **OpenTelemetry 도입**: `opentelemetry-instrumentation-fastapi` 통합. trace_id ContextVar 와 결합하면 분산 추적 자동.
+3. **OAuth2 Authorization Code + PKCE**: Keycloak/Auth0 등 외부 IdP 연동. 현재 JWT 검증기는 그대로 사용 가능.
+4. **PostgresSaver 실연동 검증**: `docker compose --profile real up postgres` 로 PostgresSaver 성능/내구성 통합 시험.
+5. **HITL Approval Gate**: `interrupt_requested` 발생 시 사용자 승인 후 `resume` 진입 UX 보강.
+6. **Hybrid sparse retriever / Reranker / Community Summary**: Retrieval 2.0 후속 — Cohere/BM25 등 외부 의존성 도입 시점에 진행.
+7. **다국어 / a11y 보강**: 프론트엔드 i18n + 접근성 자동 검증.
 
 ## 완료 기준
 

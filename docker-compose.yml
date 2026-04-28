@@ -1,0 +1,83 @@
+# Sprint 0 skeleton — 단일 명령 재현(`docker compose up`)을 위한 베이스라인.
+# 모든 외부 의존(qdrant/neo4j/postgres/redis)은 프로파일로 감싸 두어,
+# `docker compose up backend` 만으로도 fallback 경로 기동이 가능하다.
+
+services:
+  backend:
+    build: .
+    container_name: graphrag-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # 비어 있으면 fallback 경로로 동작 (app/config.py)
+      NEO4J_URI: ${NEO4J_URI:-}
+      NEO4J_USER: ${NEO4J_USER:-}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-}
+      QDRANT_URL: ${QDRANT_URL:-}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-financial_docs}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      MAX_TURNS: ${MAX_TURNS:-3}
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: graphrag-qdrant
+    profiles: ["real", "infra"]
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5.23-community
+    container_name: graphrag-neo4j
+    profiles: ["real", "infra"]
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-test12345}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    restart: unless-stopped
+
+  postgres:
+    # Sprint 4 (PostgresSaver, audit log)에서 사용
+    image: postgres:17-alpine
+    container_name: graphrag-postgres
+    profiles: ["real", "infra"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-graphrag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-graphrag}
+      POSTGRES_DB: ${POSTGRES_DB:-graphrag}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    # Sprint 1~2의 임베딩/시맨틱 캐시에서 사용
+    image: redis:7.4-alpine
+    container_name: graphrag-redis
+    profiles: ["real", "infra"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  qdrant_data: {}
+  neo4j_data: {}
+  neo4j_logs: {}
+  postgres_data: {}
+  redis_data: {}

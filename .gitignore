@@ -9,3 +9,5 @@ frontend_app/node_modules/
 frontend_app/.next/
 frontend_app/.env.local
 *.pdf
+.cache/
+중간 보고서 발표용 임시폴더/

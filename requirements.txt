@@ -1,3 +1,4 @@
+# --- Core (existing) ---
 fastapi>=0.115
 pydantic>=2.9
 uvicorn>=0.30
@@ -8,3 +9,21 @@ neo4j>=5.23
 python-dotenv>=1.0
 pandas>=2.2
 OpenDartReader>=0.2
+
+# --- Sprint 1 additions (Foundations) ---
+# 모든 신규 의존성은 try/except import 또는 graceful fallback 으로 보호되어야 한다.
+# 즉, 이 파일을 설치하지 못한 환경에서도 기존 fallback-first 경로는 그대로 동작한다.
+tenacity>=9.0          # 통일 재시도 정책
+structlog>=24.4        # 구조화 로깅 (단계 도입)
+pytest-asyncio>=0.23   # async 테스트 지원
+
+# --- Sprint 2~6 후보 (실제 코드 도입 시점에 활성화) ---
+# pybreaker>=1.0
+# redis>=5.1
+# prometheus-client>=0.21
+# opentelemetry-api>=1.27
+# opentelemetry-sdk>=1.27
+# opentelemetry-instrumentation-fastapi>=0.48b0
+# slowapi>=0.1.9
+# psycopg[binary]>=3.2
+# ragas>=0.2

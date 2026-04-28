@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    name: Backend tests + golden eval
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # 모든 외부 호출 키를 비우고 fallback 경로로만 실행 → 결정론 보장.
+      NEO4J_URI: ""
+      NEO4J_USER: ""
+      NEO4J_PASSWORD: ""
+      QDRANT_URL: ""
+      QDRANT_API_KEY: ""
+      LLM_BASE_URL: ""
+      LLM_API_KEY: ""
+      LLM_MODEL: ""
+      API_AUTH_MODE: "disabled"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile (syntax sanity)
+        run: python -m compileall -q app tests scripts eval
+
+      - name: Run pytest
+        run: pytest -q
+
+      - name: Run audit script
+        run: python scripts/audit_project.py
+
+      - name: Run golden set eval (fallback mode, JSON)
+        id: eval
+        run: |
+          python eval/run_eval.py --json > eval-result.json
+          python -c "
+          import json, sys
+          data = json.load(open('eval-result.json', encoding='utf-8'))
+          metrics = data['metrics']
+          print('## Golden Set Eval')
+          for k, v in metrics.items():
+              print(f'- {k}: {v}')
+          floor = 0.75
+          ok = metrics['pass_rate'] >= floor
+          print(f'pass_rate floor: {floor} -> {\"OK\" if ok else \"FAIL\"}')
+          sys.exit(0 if ok else 1)
+          "
+
+      - name: Upload golden set result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-eval-result
+          path: eval-result.json
+
+  frontend-lint:
+    name: Frontend lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend_app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend_app/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint

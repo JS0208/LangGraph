@@ -1,11 +1,14 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Play, Square, Activity, ShieldAlert, BrainCircuit, Network, 
+import {
+  Play, Square, Activity, ShieldAlert, BrainCircuit, Network,
   Terminal, CheckCircle2, Loader2,
-  Database, Zap, AlertTriangle, TrendingUp, Info, AlertCircle
+  Database, Zap, AlertTriangle, TrendingUp, Info, AlertCircle,
+  PauseCircle, BookOpen
 } from 'lucide-react';
+import { EvidenceDrawer, type EvidenceItem } from './components/EvidenceDrawer';
+import { KnowledgeGraph } from './components/KnowledgeGraph';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -51,15 +54,37 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null;
 }
 
+const NODE_TITLES: Record<string, string> = {
+  system: 'System Activity',
+  stream_start: 'Stream Started',
+  stream_resume: 'Stream Resumed',
+  intent_classifier: 'Intent Classifier',
+  retrieve_context: 'Hybrid Retrieval',
+  finance_analyst: 'Financial Quantitative Analysis',
+  risk_compliance: 'Regulatory & Compliance Risk',
+  critic: 'Critic Verification',
+  reflector: 'Reflexion (re-plan)',
+  orchestrator: 'Final Consensus & Graph Synthesis',
+  generate_final_report: 'Final Report',
+};
+
 export default function GraphRAGDashboard() {
   const [query, setQuery] = useState("카카오의 2024년 3분기 실적과, 자회사 카카오게임즈의 규제 리스크가 본사에 미치는 영향을 분석해.");
   const [status, setStatus] = useState<'idle' | 'analyzing' | 'complete' | 'error'>('idle');
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  
+
   const [finance, setFinance] = useState<FinanceData | null>(null);
   const [risk, setRisk] = useState<RiskData | null>(null);
   const [retrievedContext, setRetrievedContext] = useState<RetrievalContext | null>(null);
   const [orchestrator, setOrchestrator] = useState<OrchestratorData | null>(null);
+
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [evidence, setEvidence] = useState<EvidenceItem[]>([]);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [activeNode, setActiveNode] = useState<string | null>(null);
+  const [disagreementScore, setDisagreementScore] = useState<number | null>(null);
+  const [intentLabel, setIntentLabel] = useState<string | null>(null);
+  const [streamingText, setStreamingText] = useState<string>('');
 
   const logContainerRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -69,11 +94,8 @@ export default function GraphRAGDashboard() {
   useEffect(() => {
     const container = logContainerRef.current;
     if (!container) return;
-
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight;
-
-    // 사용자가 이미 하단 근처에 있을 때만 새 로그에 따라 자동 스크롤한다.
     if (distanceFromBottom < 80) {
       container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
     }
@@ -87,33 +109,126 @@ export default function GraphRAGDashboard() {
     };
   }, []);
 
-  const getNodeTitle = (node: string) => {
-    switch (node) {
-      case 'system': return 'System Activity';
-      case 'finance_analyst': return 'Financial Quantitative Analysis';
-      case 'risk_compliance': return 'Regulatory & Compliance Risk';
-      case 'orchestrator': return 'Final Consensus & Graph Synthesis';
-      default: return 'Agent Activity';
-    }
-  };
+  const getNodeTitle = (node: string) => NODE_TITLES[node] || 'Agent Activity';
 
-  const handleStop = () => {
+  const closeStream = () => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
+  };
+
+  const handleStop = async () => {
+    if (threadId) {
+      try {
+        await fetch(`${API_BASE}/api/v1/analyze/interrupt/${threadId}?reason=user_stop`, {
+          method: 'POST',
+        });
+      } catch (err) {
+        console.warn('interrupt request failed', err);
+      }
+    }
+    closeStream();
     setStatus('idle');
   };
 
-  const startAnalysis = async () => {
-    if (!query.trim() || status === 'analyzing') return;
-    
-    setStatus('analyzing');
+  const resetState = () => {
     setLogs([]);
     setFinance(null);
     setRisk(null);
     setRetrievedContext(null);
     setOrchestrator(null);
+    setEvidence([]);
+    setDisagreementScore(null);
+    setIntentLabel(null);
+    setActiveNode(null);
+    setStreamingText('');
+  };
+
+  const handleV2Event = (payload: JsonRecord) => {
+    const type = String(payload.type || '');
+    if (type === 'evidence_added') {
+      const item: EvidenceItem = {
+        evidence_id: String(payload.evidence_id || ''),
+        source_type: payload.source_type ? String(payload.source_type) : undefined,
+        company_name: payload.company_name ? String(payload.company_name) : undefined,
+        preview: payload.preview ? String(payload.preview) : undefined,
+      };
+      if (item.evidence_id) {
+        setEvidence(prev => [...prev, item]);
+      }
+      return true;
+    }
+    if (type === 'node_start' && payload.node) {
+      setActiveNode(String(payload.node));
+      if (payload.node === 'orchestrator' || payload.node === 'generate_final_report') {
+        setStreamingText('');
+      }
+      return true;
+    }
+    if (type === 'token' && typeof payload.delta === 'string') {
+      setStreamingText(prev => prev + payload.delta);
+      return true;
+    }
+    if (type === 'node_end' && payload.node) {
+      const summary = isRecord(payload.summary) ? payload.summary : null;
+      if (summary?.disagreement_score !== undefined) {
+        const value = Number(summary.disagreement_score);
+        if (!Number.isNaN(value)) setDisagreementScore(value);
+      }
+      if (summary?.intent !== undefined && summary.intent) {
+        setIntentLabel(String(summary.intent));
+      }
+      return true;
+    }
+    if (type === 'interrupt_requested') {
+      setStatus('idle');
+      return true;
+    }
+    if (type === 'done') {
+      setStatus('complete');
+      return true;
+    }
+    if (type === 'error') {
+      setStatus('error');
+      return true;
+    }
+    if (type === 'ping' || type === 'stream_start' || type === 'stream_resume') {
+      return true;
+    }
+    return false;
+  };
+
+  const handleV1Update = (payload: JsonRecord) => {
+    const [node, value] = Object.entries(payload)[0] || ["system", payload];
+    setLogs(prev => [...prev, {
+      id: crypto.randomUUID(),
+      time: new Date().toLocaleTimeString(),
+      node: String(node),
+      title: getNodeTitle(String(node)),
+      data: value,
+    }]);
+
+    if (node === "retrieve_context" && isRecord(value) && isRecord(value.retrieved_context)) {
+      setRetrievedContext(value.retrieved_context as RetrievalContext);
+    } else if (node === "finance_analyst" && isRecord(value)) {
+      const financeValue = isRecord(value.finance_metrics) ? value.finance_metrics : value;
+      setFinance(financeValue as FinanceData);
+    } else if (node === "risk_compliance") {
+      setRisk(isRecord(value) ? (value as RiskData) : { raw: value });
+    } else if (node === "orchestrator") {
+      setOrchestrator(isRecord(value) ? (value as OrchestratorData) : { raw: value });
+    } else if (node === "intent_classifier" && isRecord(value)) {
+      if (value.intent) setIntentLabel(String(value.intent));
+    }
+  };
+
+  const startAnalysis = async () => {
+    if (!query.trim() || status === 'analyzing') return;
+
+    setStatus('analyzing');
+    resetState();
+    setThreadId(null);
 
     try {
       const res = await fetch(`${API_BASE}/api/v1/analyze/start`, {
@@ -121,10 +236,24 @@ export default function GraphRAGDashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query }),
       });
-      
-      if (!res.ok) throw new Error('서버 요청 실패');
-      
+
+      if (!res.ok) {
+        if (res.status === 400) {
+          setStatus('error');
+          setLogs([{
+            id: crypto.randomUUID(),
+            time: new Date().toLocaleTimeString(),
+            node: 'system',
+            title: 'Request Blocked',
+            data: { message: '입력이 가드레일에 의해 차단되었습니다 (prompt injection).' },
+          }]);
+          return;
+        }
+        throw new Error('서버 요청 실패');
+      }
+
       const { thread_id } = await res.json();
+      setThreadId(thread_id);
 
       setLogs(prev => [...prev, {
         id: crypto.randomUUID(),
@@ -135,43 +264,27 @@ export default function GraphRAGDashboard() {
       }]);
 
       eventSourceRef.current = new EventSource(`${API_BASE}/api/v1/analyze/stream/${thread_id}`);
-      
+
       eventSourceRef.current.onmessage = (ev) => {
         if (ev.data === "[DONE]") {
-          setStatus('complete');
-          eventSourceRef.current?.close();
+          setStatus(prev => (prev === 'analyzing' ? 'complete' : prev));
+          closeStream();
           return;
         }
-
         try {
           const payload = JSON.parse(ev.data) as JsonRecord;
-          const [node, value] = Object.entries(payload)[0] || ["system", payload];
-          
-          setLogs(prev => [...prev, { 
-            id: crypto.randomUUID(),
-            time: new Date().toLocaleTimeString(), 
-            node: String(node),
-            title: getNodeTitle(String(node)),
-            data: value 
-          }]);
-
-          if (node === "retrieve_context" && isRecord(value) && isRecord(value.retrieved_context)) {
-            setRetrievedContext(value.retrieved_context as RetrievalContext);
-          } else if (node === "finance_analyst" && isRecord(value)) {
-            const financeValue = isRecord(value.finance_metrics) ? value.finance_metrics : value;
-            setFinance(financeValue as FinanceData);
-          } else if (node === "risk_compliance") {
-            setRisk(isRecord(value) ? (value as RiskData) : { raw: value });
-          } else if (node === "orchestrator") {
-            setOrchestrator(isRecord(value) ? (value as OrchestratorData) : { raw: value });
+          if (typeof payload.type === 'string') {
+            const handled = handleV2Event(payload);
+            if (handled) return;
           }
+          handleV1Update(payload);
         } catch (e) {
           console.error("Parse Error:", e);
         }
       };
 
       eventSourceRef.current.onerror = () => {
-        setStatus('error');
+        setStatus(prev => (prev === 'complete' ? prev : 'error'));
         setLogs(prev => [...prev, {
           id: crypto.randomUUID(),
           time: new Date().toLocaleTimeString(),
@@ -179,7 +292,7 @@ export default function GraphRAGDashboard() {
           title: 'Connection Error',
           data: { message: "SSE 연결이 끊어졌거나 서버 응답이 없습니다." }
         }]);
-        eventSourceRef.current?.close();
+        closeStream();
       };
 
     } catch (error) {
@@ -199,7 +312,7 @@ export default function GraphRAGDashboard() {
     if (!finance) return null;
     if ('debt_ratio' in finance && 'insight' in finance) {
       const ratio = Number(finance.debt_ratio);
-      const isWarning = ratio >= 150; 
+      const isWarning = ratio >= 150;
       return (
         <div className="space-y-4 animate-in fade-in zoom-in-95">
           <div className="grid grid-cols-2 gap-3">
@@ -239,11 +352,9 @@ export default function GraphRAGDashboard() {
     );
   };
 
-  // --- Real-world Backend Mapping Logic ---
   const getOrchestratorSummary = () => {
     if (!orchestrator) return null;
     if (typeof orchestrator.summary === 'string') return orchestrator.summary;
-    // 실제 백엔드(nodes.py)의 messages 구조 처리
     if (Array.isArray(orchestrator.messages) && orchestrator.messages.length > 0) {
       return orchestrator.messages[orchestrator.messages.length - 1].content;
     }
@@ -268,6 +379,28 @@ export default function GraphRAGDashboard() {
           <span className="font-semibold text-zinc-100 tracking-tight text-sm">FinGraph Insight</span>
         </div>
         <div className="flex items-center gap-4 text-xs font-mono">
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded border border-white/10 hover:bg-white/5 text-zinc-300"
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            Evidence ({evidence.length})
+          </button>
+          {intentLabel && (
+            <span className="px-2 py-1 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-300">
+              intent: {intentLabel}
+            </span>
+          )}
+          {disagreementScore !== null && (
+            <span className={`px-2 py-1 rounded border ${
+              disagreementScore <= 0.2
+                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                : 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+            }`}>
+              critic: {disagreementScore.toFixed(2)}
+            </span>
+          )}
           <div className="flex items-center gap-2">
             <Zap className="w-3.5 h-3.5 text-zinc-500" />
             <span className="text-zinc-400">Status: <span className={status === 'analyzing' ? 'text-amber-400' : status === 'error' ? 'text-red-400' : 'text-emerald-400'}>{status.toUpperCase()}</span></span>
@@ -291,18 +424,30 @@ export default function GraphRAGDashboard() {
               />
             </div>
             <div className="flex justify-between items-center px-2 pb-1 pt-2 border-t border-white/5">
-              <span className="text-[10px] text-zinc-500 font-mono">Real-time LangGraph Execution</span>
-              <button
-                onClick={status === 'analyzing' ? handleStop : startAnalysis}
-                className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
-                  status === 'analyzing' 
-                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20' 
-                    : 'bg-indigo-500 text-white hover:bg-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.2)]'
-                }`}
-              >
-                {status === 'analyzing' ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-                {status === 'analyzing' ? 'HALT ENGINE' : 'RUN ANALYSIS'}
-              </button>
+              <span className="text-[10px] text-zinc-500 font-mono">Real-time LangGraph Execution · v2 events</span>
+              <div className="flex gap-2">
+                {status === 'analyzing' && (
+                  <button
+                    type="button"
+                    onClick={handleStop}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20 hover:bg-amber-500/20"
+                  >
+                    <PauseCircle className="w-3.5 h-3.5" />
+                    INTERRUPT
+                  </button>
+                )}
+                <button
+                  onClick={status === 'analyzing' ? handleStop : startAnalysis}
+                  className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    status === 'analyzing'
+                      ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20'
+                      : 'bg-indigo-500 text-white hover:bg-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.2)]'
+                  }`}
+                >
+                  {status === 'analyzing' ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                  {status === 'analyzing' ? 'HALT ENGINE' : 'RUN ANALYSIS'}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -310,10 +455,15 @@ export default function GraphRAGDashboard() {
             <div className="h-10 border-b border-white/5 bg-[#121214] flex items-center px-4 justify-between">
               <span className="text-xs font-medium text-zinc-400 flex items-center gap-2">
                 <Activity className="w-3.5 h-3.5" /> Event Stream
+                {activeNode && (
+                  <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-[10px] font-mono">
+                    @ {activeNode}
+                  </span>
+                )}
               </span>
               {status === 'analyzing' && <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin" />}
             </div>
-            
+
             <div
               ref={logContainerRef}
               className="app-scrollbar flex-1 overflow-y-auto p-4 font-mono text-xs space-y-4"
@@ -395,7 +545,7 @@ export default function GraphRAGDashboard() {
 
           <div className={`p-6 rounded-2xl border transition-all duration-700 flex-1 ${orchestrator ? 'bg-[#121214] border-indigo-500/20 shadow-2xl shadow-indigo-900/10 relative overflow-hidden' : 'bg-[#121214] border-white/5 opacity-40'}`}>
             {orchestrator && <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2/3 h-px bg-gradient-to-r from-transparent via-indigo-500 to-transparent opacity-50"></div>}
-            
+
             <div className="flex items-center gap-2 mb-6">
               <div className={`p-1.5 rounded-md ${orchestrator ? 'bg-indigo-500/20 text-indigo-400' : 'bg-zinc-800 text-zinc-500'}`}>
                 <BrainCircuit className="w-5 h-5" />
@@ -405,20 +555,27 @@ export default function GraphRAGDashboard() {
 
             {orchestrator ? (
               <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
-                {/* 1. Summary Block (Mapped to actual backend message) */}
                 <div>
                   <h4 className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Executive Summary</h4>
                   <div className={`p-4 rounded-xl border ${isConsensusReached ? 'bg-indigo-950/20 border-indigo-900/50' : 'bg-amber-950/20 border-amber-900/50'}`}>
                     <p className={`text-base font-medium leading-relaxed ${isConsensusReached ? 'text-indigo-100' : 'text-amber-100'}`}>
-                      {getOrchestratorSummary()}
+                      {streamingText || getOrchestratorSummary()}
+                      {streamingText && status === 'analyzing' && (
+                        <span className="ml-1 inline-block w-2 h-4 align-middle bg-indigo-300/80 animate-pulse" aria-hidden />
+                      )}
                     </p>
                   </div>
                 </div>
 
                 {(graphNodes.length > 0 || graphEdges.length > 0) && (
                   <div className="space-y-3">
-                    <h4 className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Knowledge Graph Signals</h4>
+                    <h4 className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">Knowledge Graph Live View</h4>
                     <div className="p-4 rounded-xl border border-white/5 bg-black/20 space-y-3">
+                      <KnowledgeGraph
+                        nodes={graphNodes}
+                        edges={graphEdges}
+                        highlightNode={null}
+                      />
                       {graphNodes.length > 0 && (
                         <div className="space-y-2">
                           <p className="text-xs text-zinc-400">Linked Nodes</p>
@@ -429,21 +586,6 @@ export default function GraphRAGDashboard() {
                                 className="px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-xs"
                               >
                                 {nodeName}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {graphEdges.length > 0 && (
-                        <div className="space-y-2">
-                          <p className="text-xs text-zinc-400">Detected Relations</p>
-                          <div className="flex flex-wrap gap-2">
-                            {graphEdges.map((edgeName, index) => (
-                              <span
-                                key={`${edgeName}-${index}`}
-                                className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-xs"
-                              >
-                                {edgeName}
                               </span>
                             ))}
                           </div>
@@ -467,6 +609,12 @@ export default function GraphRAGDashboard() {
           </div>
         </section>
       </main>
+
+      <EvidenceDrawer
+        open={drawerOpen}
+        items={evidence}
+        onClose={() => setDrawerOpen(false)}
+      />
     </div>
   );
 }

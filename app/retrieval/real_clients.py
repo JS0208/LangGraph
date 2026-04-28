@@ -12,7 +12,6 @@ VECTOR_SIZE = 768
 COMPANY_ALIAS_MAP = {
     "삼성전자": "삼성전자",
     "samsungelectronics": "삼성전자",
-    "samsungelectronics": "삼성전자",
     "sk하이닉스": "SK하이닉스",
     "sk hynix": "SK하이닉스",
     "skhynix": "SK하이닉스",
@@ -232,3 +231,27 @@ async def neo4j_two_hop(
 
 def extract_company_year(user_query: str) -> tuple[str | None, int | None]:
     return _extract_company_and_year(user_query)
+
+
+def extract_companies(user_query: str) -> list[str]:
+    """질의에 등장하는 모든 회사 (canonical) 목록을 등장 순서대로 반환.
+
+    동일 회사를 중복 제거하고, alias 매칭은 길이가 긴 alias 우선이다.
+    multi-entity 비교 시나리오 (ex: "삼성전자와 SK하이닉스의 …") 의
+    sub_query 분해를 위해 사용된다.
+    """
+    if not user_query:
+        return []
+    lowered = user_query.lower()
+    normalized = _normalize_company_text(user_query)
+    found: list[str] = []
+    seen: set[str] = set()
+    for alias, canonical in sorted(COMPANY_ALIAS_MAP.items(), key=lambda item: len(item[0]), reverse=True):
+        if canonical in seen:
+            continue
+        alias_lower = alias.lower()
+        alias_normalized = _normalize_company_text(alias)
+        if alias_lower in lowered or alias_normalized in normalized:
+            found.append(canonical)
+            seen.add(canonical)
+    return found

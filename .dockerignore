@@ -1,0 +1,15 @@
+.venv
+.next
+node_modules
+__pycache__
+*.pyc
+.pytest_cache
+docs_cache
+frontend_app
+frontend_prototype
+중간 보고서 발표용 임시폴더
+.env
+.env.local
+.git
+.gitignore
+*.md

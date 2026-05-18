@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { EvidenceDrawer, type EvidenceItem } from './components/EvidenceDrawer';
 import { KnowledgeGraph } from './components/KnowledgeGraph';
+import { LANG_LABELS, t, type Lang } from './components/i18n';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -85,6 +86,7 @@ export default function GraphRAGDashboard() {
   const [disagreementScore, setDisagreementScore] = useState<number | null>(null);
   const [intentLabel, setIntentLabel] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState<string>('');
+  const [lang, setLang] = useState<Lang>('ko');
 
   const logContainerRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -376,16 +378,29 @@ export default function GraphRAGDashboard() {
           <div className="w-7 h-7 rounded bg-indigo-500 flex items-center justify-center shadow-[0_0_15px_rgba(99,102,241,0.4)]">
             <Network className="w-4 h-4 text-white" />
           </div>
-          <span className="font-semibold text-zinc-100 tracking-tight text-sm">FinGraph Insight</span>
+          <span className="font-semibold text-zinc-100 tracking-tight text-sm">{t(lang, 'app.title')}</span>
         </div>
         <div className="flex items-center gap-4 text-xs font-mono">
+          <label className="sr-only" htmlFor="lang-toggle">Language</label>
+          <select
+            id="lang-toggle"
+            aria-label="Language toggle"
+            value={lang}
+            onChange={(e) => setLang(e.target.value as Lang)}
+            className="bg-transparent border border-white/10 rounded px-1.5 py-1 text-zinc-300"
+          >
+            {(Object.keys(LANG_LABELS) as Lang[]).map((code) => (
+              <option key={code} value={code} className="text-black">{LANG_LABELS[code]}</option>
+            ))}
+          </select>
           <button
             type="button"
             onClick={() => setDrawerOpen(true)}
+            aria-label={`${t(lang, 'nav.evidence')} (${evidence.length})`}
             className="inline-flex items-center gap-1 px-2 py-1 rounded border border-white/10 hover:bg-white/5 text-zinc-300"
           >
             <BookOpen className="w-3.5 h-3.5" />
-            Evidence ({evidence.length})
+            {t(lang, 'nav.evidence')} ({evidence.length})
           </button>
           {intentLabel && (
             <span className="px-2 py-1 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-300">
@@ -466,6 +481,10 @@ export default function GraphRAGDashboard() {
 
             <div
               ref={logContainerRef}
+              role="log"
+              aria-live="polite"
+              aria-atomic="false"
+              aria-label={t(lang, 'aria.event_stream')}
               className="app-scrollbar flex-1 overflow-y-auto p-4 font-mono text-xs space-y-4"
             >
               {logs.length === 0 && status === 'idle' ? (
@@ -556,8 +575,14 @@ export default function GraphRAGDashboard() {
             {orchestrator ? (
               <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
                 <div>
-                  <h4 className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Executive Summary</h4>
-                  <div className={`p-4 rounded-xl border ${isConsensusReached ? 'bg-indigo-950/20 border-indigo-900/50' : 'bg-amber-950/20 border-amber-900/50'}`}>
+                  <h4 className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest mb-2">{t(lang, 'panel.exec_summary')}</h4>
+                  <div
+                    className={`p-4 rounded-xl border ${isConsensusReached ? 'bg-indigo-950/20 border-indigo-900/50' : 'bg-amber-950/20 border-amber-900/50'}`}
+                    role="region"
+                    aria-live="polite"
+                    aria-atomic="true"
+                    aria-label={t(lang, 'aria.summary')}
+                  >
                     <p className={`text-base font-medium leading-relaxed ${isConsensusReached ? 'text-indigo-100' : 'text-amber-100'}`}>
                       {streamingText || getOrchestratorSummary()}
                       {streamingText && status === 'analyzing' && (

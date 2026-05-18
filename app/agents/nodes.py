@@ -3,7 +3,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
+from app.agents.edges import MAX_REFLEXIONS
 from app.agents.llm_structured import extract_finance_metrics, extract_risk_points
+from app.agents.streaming import active_thread, put_token
+from app.observability import start_span
 from app.retrieval.query_planner import plan_query
 from app.retrieval.query_router import hybrid_retrieve
 from app.schemas import QueryPlan
@@ -65,7 +68,15 @@ async def retrieve_context_node(state: GraphState) -> Dict[str, Any]:
     plan_dict = state.get("query_plan")
     plan = QueryPlan.model_validate(plan_dict) if plan_dict else None
 
-    context = await hybrid_retrieve(state["user_query"], company=company, year=year, plan=plan)
+    async with start_span(
+        "retrieve_context",
+        attrs={
+            "company": company or "",
+            "year": year or 0,
+            "intent": (plan.overall_intent if plan else "unknown"),
+        },
+    ):
+        context = await hybrid_retrieve(state["user_query"], company=company, year=year, plan=plan)
 
     return {
         "retrieved_context": context,
@@ -131,7 +142,9 @@ async def critic_node(state: GraphState) -> Dict[str, Any]:
         score += 0.1
     score = min(1.0, score)
 
-    request_re_retrieval = bool(score >= 0.5 and state.get("reflexion_count", 0) < 2 and not has_evidence)
+    request_re_retrieval = bool(
+        score >= 0.5 and state.get("reflexion_count", 0) < MAX_REFLEXIONS and not has_evidence
+    )
 
     critic_report = {
         "disagreement_score": score,
@@ -155,8 +168,6 @@ async def reflector_node(state: GraphState) -> Dict[str, Any]:
 
     안전: ``reflexion_count`` 가 ``MAX_REFLEXIONS`` 에 도달하면 강제로 orchestrator 로 회귀.
     """
-    from app.agents.edges import MAX_REFLEXIONS
-
     count = state.get("reflexion_count", 0) + 1
     if count > MAX_REFLEXIONS:
         return {
@@ -197,6 +208,13 @@ async def orchestrator_node(state: GraphState) -> Dict[str, Any]:
         if consensus
         else f"재무 또는 리스크 정보가 충분하지 않아 추가 확인이 필요합니다. (disagreement={score:.2f})"
     )
+
+    # Sprint 7: true streaming — 노드 종료 전에 어절 단위 토큰을 SSE 큐로 흘림.
+    thread_id = state.get("trace_id") or active_thread()
+    if thread_id:
+        for token in decision.split(" "):
+            if token:
+                put_token(thread_id, "orchestrator", token + " ")
 
     return {
         "turn_count": turn,

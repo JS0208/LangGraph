@@ -34,7 +34,7 @@
 
 4. **실 연동 코드 확장 포인트**
    - `app/retrieval/query_router.py`:  
-     - `settings.has_real_retrieval`가 true면 Qdrant/Neo4j 실제 조회 호출
+     - `settings.use_real_retrieval`가 true면 Qdrant/Neo4j 실제 조회 호출(자격 증명이 모두 있고 `RETRIEVAL_FORCE_FALLBACK` 가 비활성일 때). Qdrant 가 꺼진 상태로 URL 만 남았으면 `RETRIEVAL_FORCE_FALLBACK=1` 로 시드 폴백만 사용.
      - 실패 시 즉시 seed fallback 전환
    - `app/retrieval/real_clients.py`:  
      - Qdrant 검색 + Neo4j 2-hop 조회 함수 구현

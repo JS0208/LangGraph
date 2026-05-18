@@ -10,8 +10,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
+from app.agents.streaming import (
+    close_buffer,
+    discard_buffer,
+    drain_until_node_end,
+    open_buffer,
+    set_active_thread,
+)
 from app.memory import get_episode_store, get_state_store
-from app.observability import counter_inc, histogram_observe, metrics_registry
+from app.observability import (
+    collector as trace_collector,
+    counter_inc,
+    histogram_observe,
+    metrics_registry,
+    start_span,
+)
 from app.observability.logging import get_logger, new_trace_id, set_trace_id
 from app.retrieval.real_clients import extract_company_year
 from app.security import (
@@ -194,6 +207,8 @@ async def stream_analysis(
     state_store = get_state_store()
     episode_store = get_episode_store()
     state_store.clear_interrupts(thread_id)
+    open_buffer(thread_id)
+    set_active_thread(thread_id)
 
     async def event_stream() -> AsyncGenerator[str, None]:
         started = time.perf_counter()
@@ -293,6 +308,18 @@ async def stream_analysis(
                     for ev in _evidence_added_events(str(node), value):
                         yield _v2_payload(ev)
 
+                    # Sprint 7: node-level true streaming buffer 도 함께 drain.
+                    # (orchestrator/finance 가 ``put_token`` 한 토큰을 progressive 로 송출.)
+                    async for buf_node, buf_delta in drain_until_node_end(thread_id):
+                        yield _v2_payload(
+                            {"type": "token", "node": buf_node, "delta": buf_delta}
+                        )
+                        counter_inc(
+                            "graphrag_tokens_streamed_total",
+                            1.0,
+                            {"node": str(buf_node), "src": "buffer"},
+                        )
+
                     # generate_final_report / orchestrator 의 최종 요약 텍스트는
                     # 토큰 단위로 progressive 송출 (UX). v2 'token' 이벤트.
                     summary_text = _final_report_text(str(node), value)
@@ -350,6 +377,9 @@ async def stream_analysis(
                     await ping_task
                 except (asyncio.CancelledError, BaseException):  # noqa: BLE001
                     pass
+                close_buffer(thread_id)
+                discard_buffer(thread_id)
+                set_active_thread(None)
         except Exception as e:
             import traceback
 
@@ -490,6 +520,21 @@ async def health() -> Dict[str, Any]:
 @router.get("/metrics", include_in_schema=False, response_class=PlainTextResponse)
 async def metrics_endpoint() -> str:
     return metrics_registry().prometheus_text()
+
+
+@router.get("/traces/{trace_id}", include_in_schema=False)
+async def trace_endpoint(trace_id: str) -> Dict[str, Any]:
+    """OTel-style span tree for a single thread/trace_id (drill-down)."""
+    spans = trace_collector().by_trace(trace_id)
+    return {"trace_id": trace_id, "spans": spans, "count": len(spans)}
+
+
+@router.get("/traces", include_in_schema=False)
+async def trace_listing(limit: int = 200) -> Dict[str, Any]:
+    snap = trace_collector().snapshot()
+    if limit > 0:
+        snap = snap[-limit:]
+    return {"count": len(snap), "spans": snap}
 
 
 __all__ = ["router"]

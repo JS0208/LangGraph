@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0.0",
+  "description": "Chaos 6종 — 외부 의존 단절/지연/오류 시나리오. 모두 sane fallback 응답이 나와야 통과.",
+  "scenarios": [
+    {
+      "id": "CHAOS-01-qdrant-down",
+      "target": "qdrant",
+      "fault": "exception",
+      "exception_message": "Qdrant unreachable",
+      "expected_mode_in": ["fallback"]
+    },
+    {
+      "id": "CHAOS-02-neo4j-down",
+      "target": "neo4j",
+      "fault": "exception",
+      "exception_message": "Neo4j connection refused",
+      "expected_mode_in": ["fallback", "partial_real"]
+    },
+    {
+      "id": "CHAOS-03-llm-429",
+      "target": "llm",
+      "fault": "rate_limit_429",
+      "expected_mode_in": ["fallback", "partial_real", "real"],
+      "expected_finance_source_in": ["fallback", "mock"]
+    },
+    {
+      "id": "CHAOS-04-qdrant-slow",
+      "target": "qdrant",
+      "fault": "timeout",
+      "delay_s": 35,
+      "expected_mode_in": ["fallback", "partial_real"]
+    },
+    {
+      "id": "CHAOS-05-circuit-open",
+      "target": "qdrant",
+      "fault": "repeat_exception",
+      "repeat": 5,
+      "expected_breaker_open": true
+    },
+    {
+      "id": "CHAOS-06-llm-malformed-json",
+      "target": "llm",
+      "fault": "malformed_json",
+      "expected_finance_source_in": ["fallback", "parse_error", "mock"]
+    }
+  ]
+}

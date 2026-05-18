@@ -1,13 +1,4 @@
-"""Guardrails — Sprint 6.
-
-기능
-- ``mask_pii``: 한국 주민번호(13자리), 카드번호(16자리), 계좌번호 추정 패턴, 이메일을 마스킹.
-- ``classify_input``: prompt-injection / 범위외(out-of-scope) / 정상.
-- ``sanitize_text``: 위험 토큰 제거 후 길이 제한.
-
-본 모듈은 기존 ``query_planner._classify_intent`` 와 별개로 동작하며,
-입력단(API) 에서 1차 차단을, 플래너에서 2차 분류를 수행하는 이중 방어다.
-"""
+"""Guardrails — Sprint 6 (Pillar 7)."""
 
 from __future__ import annotations
 
@@ -32,7 +23,11 @@ PROMPT_INJECTION_HINTS: tuple[str, ...] = (
     "내부 지시",
     "탈옥",
     "jailbreak",
+    "jailbroke",
+    "jailbroken",
     "developer mode",
+    "you are now",
+    "act as system",
 )
 
 OUT_OF_SCOPE_HINTS: tuple[str, ...] = (
@@ -94,10 +89,7 @@ def classify_input(text: str) -> GuardrailVerdict:
 
 
 def sanitize_text(text: str, *, max_length: int = 2000) -> str:
-    """입력을 PII 마스킹 + 길이 제한.
-
-    LLM 호출 직전 이 함수를 거치도록 합쳐 두면 PII 가 외부로 새는 것을 막는다.
-    """
+    """입력을 PII 마스킹 + 길이 제한."""
     if not text:
         return ""
     masked = mask_pii(text)

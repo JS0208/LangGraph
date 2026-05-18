@@ -9,6 +9,7 @@ from app.config import settings
 from app.observability.metrics import counter_inc
 from app.retrieval.real_clients import extract_company_year, neo4j_two_hop, qdrant_search
 from app.retrieval.query_planner import plan_query
+from app.retrieval.reranker import rerank as _rerank_hits
 from app.schemas import Evidence, QueryPlan
 from app.utils.circuit import CircuitBreaker, CircuitOpenError
 
@@ -223,7 +224,7 @@ async def hybrid_retrieve(
             "plan": plan.model_dump(),
         }
 
-    if settings.has_real_retrieval:
+    if settings.use_real_retrieval:
         # Sprint 2: 단일 질의 기반 호출(병렬화 hook 만 마련). Sprint 3 에서 sub query 별 병렬 검색 도입.
         vector_results, graph_results = await _run_real_retrieval(
             user_query, company=company, year=year
@@ -233,6 +234,25 @@ async def hybrid_retrieve(
             mode = "real"
             if not vector_results or not (graph_results.get("nodes") or graph_results.get("edges")):
                 mode = "partial_real"
+
+            # Sprint 7: Hybrid(BM25)+Reranker — 5개 초과로 회수해 두면 rerank 효과가 크다.
+            # 현재 vector_results 가 dense 만 갖고 있어도 rerank 는 안전(sparse 보조).
+            try:
+                if len(vector_results) > 1:
+                    vector_results = _rerank_hits(
+                        user_query,
+                        vector_results,
+                        top_k=max(5, min(20, len(vector_results))),
+                        intent=plan.overall_intent,
+                    )
+                    counter_inc(
+                        "retrieval_rerank_total",
+                        1.0,
+                        {"intent": plan.overall_intent, "mode": mode},
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("rerank 실패 (%s) — dense 결과 그대로 사용", exc)
+
             analysis_context = _build_analysis_context(
                 company=company,
                 year=year,

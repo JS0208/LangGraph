@@ -8,11 +8,15 @@ PostgresSaver 통합은 Sprint 4 이후 별도 PR. 본 단계는 sqlite + in-mem
 """
 
 from app.memory.episode_store import EpisodeStore, get_episode_store
+from app.memory.long_term import LongTermMemory, get_long_term_memory, set_long_term_memory
 from app.memory.state_store import StateStore, get_state_store
 
 __all__ = [
     "EpisodeStore",
+    "LongTermMemory",
     "StateStore",
     "get_episode_store",
+    "get_long_term_memory",
+    "set_long_term_memory",
     "get_state_store",
 ]

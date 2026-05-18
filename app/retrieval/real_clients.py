@@ -9,6 +9,8 @@ import httpx
 from app.config import settings
 
 VECTOR_SIZE = 768
+# Qdrant 가 다운됐을 때 실패를 빨리 감지해 회로 차단·폴백으로 넘긴다 (초).
+_QDRANT_TIMEOUT = httpx.Timeout(5.0, connect=2.5)
 COMPANY_ALIAS_MAP = {
     "삼성전자": "삼성전자",
     "samsungelectronics": "삼성전자",
@@ -103,7 +105,7 @@ async def qdrant_search(
     headers = {"api-key": api_key}
 
     async def _post_query(body: dict[str, Any]) -> list[dict[str, Any]]:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=_QDRANT_TIMEOUT) as client:
             resp = await client.post(search_url, json=body, headers=headers)
             if resp.status_code == 400 and body.get("filter"):
                 error_text = resp.text
@@ -129,7 +131,7 @@ async def qdrant_search(
             "with_payload": True,
             "filter": filter_body,
         }
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=_QDRANT_TIMEOUT) as client:
             resp = await client.post(scroll_url, json=body, headers=headers)
             resp.raise_for_status()
             return resp.json().get("result", {}).get("points", [])

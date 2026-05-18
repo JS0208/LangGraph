@@ -12,6 +12,13 @@ from app.observability.metrics import (
     metrics_snapshot,
     reset_metrics,
 )
+from app.observability.tracing import (
+    Span,
+    collector,
+    current_span,
+    reset_traces,
+    start_span,
+)
 
 __all__ = [
     "counter_inc",
@@ -19,4 +26,9 @@ __all__ = [
     "metrics_registry",
     "metrics_snapshot",
     "reset_metrics",
+    "Span",
+    "start_span",
+    "collector",
+    "current_span",
+    "reset_traces",
 ]

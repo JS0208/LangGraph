@@ -13,6 +13,7 @@ from app.api.endpoints import router
 from app.observability import counter_inc, histogram_observe
 from app.observability.logging import init_logging, set_trace_id
 from app.retrieval.real_clients import extract_company_year
+from app.security.rate_limit import get_rate_limiter
 
 
 def _allowed_origins() -> list[str]:
@@ -42,6 +43,20 @@ app.add_middleware(
 )
 
 
+def _rate_limit_enabled() -> bool:
+    return os.getenv("RATE_LIMIT_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _client_key(request: Request) -> str:
+    user = request.headers.get("X-User-Id")
+    if user:
+        return f"user:{user}"
+    client = request.client
+    if client and client.host:
+        return f"ip:{client.host}"
+    return "ip:unknown"
+
+
 @app.middleware("http")
 async def request_id_and_metrics(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or uuid.uuid4().hex
@@ -52,6 +67,24 @@ async def request_id_and_metrics(request: Request, call_next):
         1.0,
         {"method": request.method, "path": _route_template(request)},
     )
+
+    # Sprint 7: token-bucket rate limit (env 로 활성).
+    if _rate_limit_enabled():
+        limiter = get_rate_limiter()
+        if not limiter.allow(_client_key(request)):
+            from fastapi.responses import JSONResponse
+
+            counter_inc(
+                "http_request_errors_total",
+                1.0,
+                {"method": request.method, "path": _route_template(request)},
+            )
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "rate limit exceeded"},
+                headers={"X-Request-Id": request_id, "Retry-After": "1"},
+            )
+
     try:
         response = await call_next(request)
     except Exception:

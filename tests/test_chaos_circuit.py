@@ -31,6 +31,7 @@ def _reset_breakers():
 
 def test_qdrant_breaker_trips_after_threshold(monkeypatch: pytest.MonkeyPatch):
     fake_settings = types.SimpleNamespace(
+        use_real_retrieval=True,
         has_real_retrieval=True,
         qdrant_url="http://fake",
         qdrant_api_key="key",

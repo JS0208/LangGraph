@@ -11,3 +11,7 @@ frontend_app/.env.local
 *.pdf
 .cache/
 중간 보고서 발표용 임시폴더/
+
+# 인턴 지원 개인 자료 (깃헙 공개 제외)
+2026_인턴지원/
+_temp_

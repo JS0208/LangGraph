@@ -27,6 +27,7 @@ KNOWN_INTENTS = {
     "critic",
     "intent_classifier",
     "reflexion",
+    "evaluator",
 }
 
 

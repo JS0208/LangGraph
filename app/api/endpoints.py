@@ -75,7 +75,10 @@ def _summarize_node_payload(node: str, value: Any) -> dict[str, Any]:
     summary: dict[str, Any] = {}
     if not isinstance(value, dict):
         return summary
-    if node == "intent_classifier":
+    if node == "input_guardrails":
+        summary["classification"] = value.get("guardrails_verdict", {}).get("classification")
+        summary["blocked"] = value.get("blocked", False)
+    elif node == "intent_classifier":
         summary["intent"] = value.get("intent")
     elif node == "retrieve_context":
         ctx = value.get("retrieved_context") or {}
@@ -89,6 +92,10 @@ def _summarize_node_payload(node: str, value: Any) -> dict[str, Any]:
         summary["risk_count"] = len(value.get("risk_points") or [])
     elif node == "critic":
         summary["disagreement_score"] = value.get("disagreement_score")
+    elif node == "evaluation":
+        eval_score = value.get("eval_score") or {}
+        summary["eval_total"] = eval_score.get("total")
+        summary["eval_passed"] = value.get("eval_passed")
     elif node == "orchestrator":
         summary["consensus_reached"] = value.get("consensus_reached")
         summary["turn_count"] = value.get("turn_count")
@@ -229,9 +236,11 @@ async def stream_analysis(
                 "finance_metrics": {},
                 "risk_points": [],
                 "consensus_reached": False,
-                "next_node": "intent_classifier",
+                "next_node": "input_guardrails",
                 "evidence": [],
                 "reflexion_count": 0,
+                "quality_flags": [],
+                "blocked": False,
                 "disagreement_score": 0.0,
                 "trace_id": thread_id,
             }
@@ -471,10 +480,23 @@ async def resume_analysis(
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
             from app.agents.graph import build_graph
+            import importlib.util
 
             graph = build_graph()
+            config = {"configurable": {"thread_id": thread_id}}
             yield _v2_payload({"type": "stream_resume", "thread_id": thread_id, "ts": time.time()})
-            stream = graph.astream(dict(base), config={"configurable": {"thread_id": thread_id}}, stream_mode="updates")
+
+            # LangGraph 네이티브 resume: 체크포인터에서 상태 복원 후 None input 으로 재개.
+            # LocalFallbackGraph 는 None input 을 지원하지 않으므로 dict(base) 사용.
+            if importlib.util.find_spec("langgraph") is not None and hasattr(graph, "aupdate_state"):
+                # state 패치 적용 후 None input 으로 재개 (LangGraph 네이티브 방식)
+                if any(v is not None for v in [patch.user_query, patch.target_company, patch.target_year, patch.extra]):
+                    await graph.aupdate_state(config, base)
+                resume_input = None  # 마지막 체크포인트에서 재개
+            else:
+                resume_input = dict(base)  # fallback
+
+            stream = graph.astream(resume_input, config=config, stream_mode="updates")
             current_state = dict(base)
             try:
                 while True:
@@ -497,7 +519,6 @@ async def resume_analysis(
         except Exception as e:  # noqa: BLE001
             yield f"data: {json.dumps({'system': {'status': 'error', 'message': str(e)}}, ensure_ascii=False)}\n\n"
             yield _sse_done()
-
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 

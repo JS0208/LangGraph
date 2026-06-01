@@ -1,24 +1,53 @@
-"""Reranker — Sprint 7 (Pillar 1 보강).
-
-목적
-- dense + sparse 결과를 섞고(α 가중), 휴리스틱 reranker 로 K=20 → 5 로 축약.
-- 외부 BGE/Cohere 가용 시 자동으로 슬롯 인되도록 인터페이스를 단순화.
-
-설계 원칙
-- 의존성 0 — 기본 reranker 는 lexical overlap + payload richness 가중.
-- ``rerank(query, hits)`` 는 동일 hit 객체 리스트(점수만 갱신/정렬)를 반환.
-- α(dense vs sparse) 가중치는 query intent 별로 동적 조정 가능 (planner 가 힌트 제공).
-"""
-
+"""Reranker with Cross-Encoder anti-antonym support."""
 from __future__ import annotations
 
+import importlib.util
+import logging
+import os
+import re
 from typing import Any, Iterable, Sequence
 
 from app.retrieval.sparse import normalize, sparse_score, tokenize
 
+logger = logging.getLogger(__name__)
 
-def _payload_text(hit: dict[str, Any]) -> str:
-    parts: list[str] = []
+_CROSS_ENCODER_MODEL = os.getenv(
+    "CROSS_ENCODER_MODEL",
+    "cross-encoder/ms-marco-MiniLM-L-6-v2",
+)
+
+_TECHNICAL_PATTERN = re.compile(
+    r"[A-Z]{2,}|[_\.]|\bAPI\b|\bSQL\b|\bIPO\b|\bROE\b|\bROA\b|\bEBITDA\b"
+    r"|\bPER\b|\bPBR\b|\bEPS\b"
+)
+_CONCEPTUAL_PATTERN = re.compile(r"\uc774\ub780|\uac1c\ub150|\ubc29\ubc95|\uc6d0\ub9ac|\uc774\uc720|\uc758\ubbf8|\uc804\ub9dd|\ube44\uad50")
+
+
+def _get_cross_encoder():
+    if importlib.util.find_spec("sentence_transformers") is None:
+        return None
+    try:
+        from sentence_transformers import CrossEncoder
+        return CrossEncoder(_CROSS_ENCODER_MODEL)
+    except Exception as exc:
+        logger.debug("CrossEncoder load failed (%s) -- using heuristic reranker", exc)
+        return None
+
+
+_cross_encoder_instance = None
+_cross_encoder_loaded = False
+
+
+def _load_cross_encoder():
+    global _cross_encoder_instance, _cross_encoder_loaded
+    if not _cross_encoder_loaded:
+        _cross_encoder_instance = _get_cross_encoder()
+        _cross_encoder_loaded = True
+    return _cross_encoder_instance
+
+
+def _payload_text(hit: dict) -> str:
+    parts = []
     for key in ("text_content", "summary", "company_name", "event_type", "text_preview"):
         value = hit.get(key)
         if isinstance(value, str):
@@ -26,24 +55,33 @@ def _payload_text(hit: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def _payload_richness(hit: dict[str, Any]) -> int:
-    keys = (
-        "quarter",
-        "revenue",
-        "operating_profit",
-        "debt_ratio",
-        "has_financial_data",
-        "date",
-        "event_type",
-        "summary",
-    )
+def _payload_richness(hit: dict) -> int:
+    keys = ("quarter", "revenue", "operating_profit", "debt_ratio",
+            "has_financial_data", "date", "event_type", "summary")
     return sum(1 for k in keys if hit.get(k) not in (None, "", []))
 
 
-def _lexical_overlap(query_tokens: set[str], hit_tokens: set[str]) -> float:
+def _lexical_overlap(query_tokens: set, hit_tokens: set) -> float:
     if not query_tokens:
         return 0.0
     return len(query_tokens & hit_tokens) / len(query_tokens)
+
+
+def alpha_for_query(query: str, intent: str | None = None) -> float:
+    """Dynamically determine dense/sparse alpha based on query content + intent."""
+    if _TECHNICAL_PATTERN.search(query):
+        return 0.35  # sparse boost for technical terms
+    if _CONCEPTUAL_PATTERN.search(query):
+        return 0.65  # dense boost for conceptual queries
+    if intent in {"facts", "trend"}:
+        return 0.55
+    if intent in {"risk", "relation"}:
+        return 0.40
+    return 0.50
+
+
+def alpha_for_intent(intent: str | None) -> float:
+    return alpha_for_query("", intent=intent)
 
 
 def hybrid_blend(
@@ -51,11 +89,7 @@ def hybrid_blend(
     sparse_scores: Sequence[float],
     *,
     alpha: float = 0.5,
-) -> list[float]:
-    """dense·sparse 점수 가중 합산. alpha 가 클수록 dense 우선.
-
-    길이가 다르면 짧은 쪽을 0 으로 패딩.
-    """
+) -> list:
     n = max(len(dense_scores), len(sparse_scores))
     d = list(dense_scores) + [0.0] * (n - len(dense_scores))
     s = list(sparse_scores) + [0.0] * (n - len(sparse_scores))
@@ -65,29 +99,16 @@ def hybrid_blend(
     return [a * dx + (1 - a) * sx for dx, sx in zip(d_norm, s_norm)]
 
 
-def alpha_for_intent(intent: str | None) -> float:
-    """intent 별 dense/sparse 가중 — 휴리스틱."""
-    if intent in {"facts", "trend"}:
-        return 0.55  # 정량 위주 — dense 약간 우세
-    if intent in {"risk", "relation"}:
-        return 0.4  # 키워드 매칭이 중요 — sparse 가중
-    return 0.5
-
-
 def rerank(
     query: str,
-    hits: Iterable[dict[str, Any]],
+    hits: Iterable[dict],
     *,
     top_k: int = 5,
     intent: str | None = None,
     dense_score_key: str = "score",
-) -> list[dict[str, Any]]:
-    """휴리스틱 reranker.
-
-    1. dense 점수(없으면 0) + sparse(BM25-Lite) 가중 합.
-    2. lexical overlap 보너스, payload richness 보너스.
-    3. 상위 ``top_k`` 만 반환. 각 hit 의 ``rerank_score`` 필드에 결과 점수 기록.
-    """
+    use_cross_encoder: bool = True,
+) -> list:
+    """Hybrid reranker with optional Cross-Encoder for antonym disambiguation."""
     items = list(hits)
     if not items:
         return []
@@ -95,10 +116,12 @@ def rerank(
     corpus = [_payload_text(it) for it in items]
     dense = [float(it.get(dense_score_key, 0.0) or 0.0) for it in items]
     sparse = sparse_score(query, corpus)
-    blended = hybrid_blend(dense, sparse, alpha=alpha_for_intent(intent))
+
+    alpha = alpha_for_query(query, intent)
+    blended = hybrid_blend(dense, sparse, alpha=alpha)
 
     q_tokens = set(tokenize(query))
-    enriched: list[tuple[float, dict[str, Any]]] = []
+    enriched = []
     for idx, it in enumerate(items):
         h_tokens = set(tokenize(corpus[idx]))
         bonus = 0.15 * _lexical_overlap(q_tokens, h_tokens)
@@ -107,14 +130,31 @@ def rerank(
         out = dict(it)
         out["rerank_score"] = score
         out["sparse_score"] = sparse[idx] if idx < len(sparse) else 0.0
+        out["hybrid_alpha"] = alpha
         enriched.append((score, out))
 
     enriched.sort(key=lambda kv: kv[0], reverse=True)
-    return [item for _score, item in enriched[: max(1, top_k)]]
+    candidates = enriched[: max(top_k * 3, 20)]
+
+    if use_cross_encoder and len(candidates) > 1:
+        ce = _load_cross_encoder()
+        if ce is not None:
+            try:
+                texts = [_payload_text(item) for _s, item in candidates]
+                pairs = [(query, t) for t in texts]
+                ce_scores = ce.predict(pairs)
+                ce_norm = normalize(list(ce_scores))
+                enriched_ce = []
+                for i, (_old_score, item) in enumerate(candidates):
+                    item = dict(item)
+                    item["cross_encoder_score"] = float(ce_norm[i])
+                    enriched_ce.append((float(ce_norm[i]), item))
+                enriched_ce.sort(key=lambda kv: kv[0], reverse=True)
+                return [item for _score, item in enriched_ce[:max(1, top_k)]]
+            except Exception as exc:
+                logger.warning("CrossEncoder reranking failed (%s) -- using heuristic", exc)
+
+    return [item for _score, item in enriched[:max(1, top_k)]]
 
 
-__all__ = [
-    "rerank",
-    "hybrid_blend",
-    "alpha_for_intent",
-]
+__all__ = ["rerank", "hybrid_blend", "alpha_for_intent", "alpha_for_query"]

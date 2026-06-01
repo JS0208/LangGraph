@@ -52,21 +52,34 @@ jobs:
       - name: Run audit script
         run: python scripts/audit_project.py
 
-      - name: Run golden set eval (fallback mode, JSON)
+      - name: Run golden set eval + RAGAS gate (fallback mode)
         id: eval
         run: |
-          python eval/run_eval.py --json > eval-result.json
+          python eval/run_eval.py --json --gate > eval-result.json || true
           python -c "
           import json, sys
           data = json.load(open('eval-result.json', encoding='utf-8'))
           metrics = data['metrics']
           print('## Golden Set Eval')
           for k, v in metrics.items():
-              print(f'- {k}: {v}')
-          floor = 0.75
-          ok = metrics['pass_rate'] >= floor
-          print(f'pass_rate floor: {floor} -> {\"OK\" if ok else \"FAIL\"}')
-          sys.exit(0 if ok else 1)
+              print(f'- {k}: {round(v,3) if isinstance(v,float) else v}')
+          failures = []
+          checks = [
+              ('pass_rate',                    0.75),
+              ('ragas_like_faithfulness',      0.55),
+              ('ragas_like_answer_relevance',  0.50),
+              ('ragas_like_answer_correctness',0.45),
+          ]
+          for key, floor in checks:
+              val = metrics.get(key, 0)
+              status = 'PASS' if val >= floor else 'FAIL'
+              print(f"  [{status}] {key}: {val:.3f} (min={floor})")
+              if val < floor:
+                  failures.append(f"{key}={val:.3f} < {floor}")
+          if failures:
+              print('## CI GATE FAILED')
+              sys.exit(1)
+          print('## CI GATE PASSED')
           "
 
       - name: Upload golden set result

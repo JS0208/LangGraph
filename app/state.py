@@ -37,3 +37,25 @@ class GraphState(TypedDict, total=False):
     reflexion_count: int
     trace_id: str
     cost_usd: float
+
+    # --- 8개 개선 항목 신규 필드 ---
+
+    # Guardrails 노드
+    guardrails_verdict: Dict[str, Any]   # {"classification": ..., "reasons": [...]}
+    blocked: bool                        # True 이면 guardrails 차단 발생
+    block_reason: str                    # 차단 이유 ("out_of_scope", "prompt_injection" 등)
+    sanitized_query: str                 # PII 마스킹된 정제 쿼리
+    output_grounding_score: float        # 출력 guardrails: 환각 점수 (0~1)
+    quality_flags: Annotated[List[str], operator.add]  # 품질 경고 플래그 누적
+
+    # Reflector EMA 가중치 피드백
+    retrieval_weights: Dict[str, Any]    # {"authority_weight": ..., "diversity_bonus": ..., ...}
+    reflection_quality_score: float      # 반성 품질 ���수 (0~1)
+
+    # 평가 노드
+    eval_score: Dict[str, Any]           # {"accuracy": .., "completeness": .., "total": ..}
+    eval_passed: bool                    # 평가 통과 여부
+    eval_feedback: str                   # 평가자 피드백
+
+    # 적응형 hop 탐색
+    hop_depth_used: int                  # 실제 사용된 hop 깊이

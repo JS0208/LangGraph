@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from collections.abc import AsyncIterator
 from typing import Any
 
 from app.agents.edges import MAX_REFLEXIONS, MAX_TURNS, router_logic
 from app.agents.nodes import (
     critic_node,
+    evaluation_node,
     finance_analyst_node,
     generate_final_report_node,
+    input_guardrails_node,
     intent_classifier_node,
     orchestrator_node,
     reflector_node,
@@ -17,8 +20,20 @@ from app.agents.nodes import (
 )
 from app.state import GraphState
 
+# 환경변수로 interrupt 지점 제어 (기본: retrieve_context 전 — Human-in-the-Loop 패턴)
+_INTERRUPT_BEFORE = [
+    n.strip()
+    for n in os.getenv("GRAPH_INTERRUPT_BEFORE", "").split(",")
+    if n.strip()
+]
+_INTERRUPT_AFTER = [
+    n.strip()
+    for n in os.getenv("GRAPH_INTERRUPT_AFTER", "").split(",")
+    if n.strip()
+]
 
 NODE_MAP = {
+    "input_guardrails": input_guardrails_node,
     "intent_classifier": intent_classifier_node,
     "retrieve_context": retrieve_context_node,
     "finance_analyst": finance_analyst_node,
@@ -26,12 +41,15 @@ NODE_MAP = {
     "critic": critic_node,
     "reflector": reflector_node,
     "orchestrator": orchestrator_node,
+    "evaluation": evaluation_node,
     "generate_final_report": generate_final_report_node,
 }
 
 
 class LocalFallbackGraph:
-    """LangGraph 미설치 환경에서도 동작하는 최소 실행기. Sprint 3 에서 critic/reflector 노드 추가."""
+    """LangGraph 미설치 환경에서도 동작하는 최소 실행기.
+    guardrails, evaluation 노드 포함.
+    """
 
     async def astream(
         self,
@@ -41,17 +59,17 @@ class LocalFallbackGraph:
     ) -> AsyncIterator[dict[str, Any]]:
         del config, stream_mode
         current = dict(state)
-        # 안전 가드: intent 가 미리 분류되어 있으면 intent_classifier 를 건너뛴다.
-        if current.get("intent") and current.get("next_node") in {None, "intent_classifier"}:
+
+        # 안전 가드: intent 가 미리 분류되어 있으면 guardrails 를 건너뛴다.
+        if current.get("intent") and current.get("next_node") in {None, "input_guardrails"}:
             current["next_node"] = "retrieve_context"
 
-        next_node = current.get("next_node") or "intent_classifier"
+        next_node = current.get("next_node") or "input_guardrails"
         if next_node not in NODE_MAP:
-            next_node = "intent_classifier"
+            next_node = "input_guardrails"
 
         steps = 0
-        # 안전 가드: 무한 루프 차단. 최악의 경우라도 (turns + reflexions + 5) 이내 종료.
-        max_steps = max(8, (MAX_TURNS + MAX_REFLEXIONS) * 4)
+        max_steps = max(12, (MAX_TURNS + MAX_REFLEXIONS) * 4)
 
         while True:
             steps += 1
@@ -62,7 +80,6 @@ class LocalFallbackGraph:
             if next_node == "generate_final_report":
                 break
             if steps >= max_steps:
-                # 강제 종료 (이론상 도달 불가)
                 terminal = await generate_final_report_node(current)
                 current.update(terminal)
                 yield {"generate_final_report": terminal}
@@ -79,10 +96,20 @@ def _build_with_langgraph():
     from app.memory.saver_factory import get_checkpointer
 
     graph = StateGraph(GraphState)
+
+    # 모든 노드 등록
     for name, fn in NODE_MAP.items():
         graph.add_node(name, fn)
 
-    graph.add_edge(START, "intent_classifier")
+    # ── 그래프 엣지 정의 ──────────────────────────────────────────────────────
+    # START → input_guardrails (항상 첫 번째 — 안전 검증)
+    graph.add_edge(START, "input_guardrails")
+
+    # guardrails 결과에 따라 분기
+    # blocked=True → generate_final_report, blocked=False → intent_classifier
+    graph.add_conditional_edges("input_guardrails", router_logic)
+
+    # remaining edges
     graph.add_conditional_edges("intent_classifier", router_logic)
     graph.add_conditional_edges("retrieve_context", router_logic)
     graph.add_conditional_edges("finance_analyst", router_logic)
@@ -90,11 +117,25 @@ def _build_with_langgraph():
     graph.add_conditional_edges("critic", router_logic)
     graph.add_conditional_edges("reflector", router_logic)
     graph.add_conditional_edges("orchestrator", router_logic)
+
+    # evaluation routes to generate_final_report (pass) or reflector (fail)
+    graph.add_conditional_edges("evaluation", router_logic)
+
     graph.add_edge("generate_final_report", END)
 
-    # Postgres/SQLite saver 가용 시 사용, 미가용 시 MemorySaver fallback.
+    # Checkpointer: Postgres/SQLite if available, else MemorySaver fallback
+    # Controlled via CHECKPOINTER_DSN env var
     checkpointer = get_checkpointer() or MemorySaver()
-    return graph.compile(checkpointer=checkpointer)
+
+    # Interrupt points declared via GRAPH_INTERRUPT_BEFORE / GRAPH_INTERRUPT_AFTER
+    # On interrupt, resume endpoint continues with None input from checkpoint
+    compile_kwargs: dict[str, Any] = {"checkpointer": checkpointer}
+    if _INTERRUPT_BEFORE:
+        compile_kwargs["interrupt_before"] = _INTERRUPT_BEFORE
+    if _INTERRUPT_AFTER:
+        compile_kwargs["interrupt_after"] = _INTERRUPT_AFTER
+
+    return graph.compile(**compile_kwargs)
 
 
 def build_graph():

@@ -9,4 +9,58 @@
       "debt_ratio": 168.5,
       "disclosures": [
         {"date": "2024-10-10", "event_type": "REGULATION", "summary": "카카오게임즈 규제 조사 진행"},
-        {"date": "2
+        {"date": "2024-09-15", "event_type": "EARNINGS", "summary": "3분기 매출 2.1조원, 영업이익 1,200억원 기록"},
+        {"date": "2024-08-20", "event_type": "INVESTMENT", "summary": "카카오엔터프라이즈 AI 사업부 분사 추진"}
+      ]
+    },
+    {
+      "name": "카카오",
+      "year": 2023,
+      "quarter": "Q4",
+      "revenue": 195000,
+      "operating_profit": 9800,
+      "debt_ratio": 172.3,
+      "disclosures": [
+        {"date": "2024-01-25", "event_type": "EARNINGS", "summary": "2023년 4분기 매출 1.95조원, SM엔터 편입 효과 반영"},
+        {"date": "2024-01-10", "event_type": "REGULATION", "summary": "공정위, 카카오 계열사 일감몰아주기 조사"}
+      ]
+    },
+    {
+      "name": "삼성전자",
+      "year": 2024,
+      "quarter": "Q3",
+      "revenue": 790000,
+      "operating_profit": 91800,
+      "debt_ratio": 34.2,
+      "disclosures": [
+        {"date": "2024-10-08", "event_type": "EARNINGS", "summary": "3분기 매출 79조원, 영업이익 9.18조원 (반도체 HBM 실적 회복)"},
+        {"date": "2024-09-30", "event_type": "INVESTMENT", "summary": "HBM3E 12단 양산 돌입, 엔비디아 공급 확대 예정"},
+        {"date": "2024-08-14", "event_type": "RISK", "summary": "미국 반도체 수출규제 강화로 중국 매출 일부 영향"}
+      ]
+    },
+    {
+      "name": "삼성전자",
+      "year": 2023,
+      "quarter": "Q4",
+      "revenue": 670000,
+      "operating_profit": 28000,
+      "debt_ratio": 36.8,
+      "disclosures": [
+        {"date": "2024-01-31", "event_type": "EARNINGS", "summary": "2023 4분기 반도체 적자 탈피, 전사 영업이익 2.8조 회복"},
+        {"date": "2024-01-05", "event_type": "INVESTMENT", "summary": "평택 P4 라인 DRAM 투자 재개"}
+      ]
+    },
+    {
+      "name": "NAVER",
+      "year": 2024,
+      "quarter": "Q2",
+      "revenue": 265000,
+      "operating_profit": 45000,
+      "debt_ratio": 62.1,
+      "disclosures": [
+        {"date": "2024-08-07", "event_type": "EARNINGS", "summary": "2분기 매출 2.65조원, 클라우드·AI 사업 고성장"},
+        {"date": "2024-07-22", "event_type": "INVESTMENT", "summary": "HyperCLOVA X 글로벌 B2B 출시 및 일본 라인야후 협력 재편"}
+      ]
+    }
+  ]
+}

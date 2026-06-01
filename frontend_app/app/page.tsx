@@ -395,7 +395,7 @@ export default function GraphRAGDashboard() {
           </select>
           <button
             type="button"
-            onClick={() => setDrawerOpen(true)}
+            onClick={() => setDrawerOpen(prev => !prev)}
             aria-label={`${t(lang, 'nav.evidence')} (${evidence.length})`}
             className="inline-flex items-center gap-1 px-2 py-1 rounded border border-white/10 hover:bg-white/5 text-zinc-300"
           >

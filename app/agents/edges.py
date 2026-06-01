@@ -9,6 +9,7 @@ MAX_TURNS = int(os.getenv("MAX_TURNS", "3"))
 MAX_REFLEXIONS = int(os.getenv("MAX_REFLEXIONS", "2"))
 
 VALID_NODES = {
+    "input_guardrails",
     "intent_classifier",
     "retrieve_context",
     "finance_analyst",
@@ -16,11 +17,16 @@ VALID_NODES = {
     "critic",
     "reflector",
     "orchestrator",
+    "evaluation",
     "generate_final_report",
 }
 
 
 def router_logic(state: GraphState) -> str:
+    # Guardrails blocked -> immediately finish
+    if state.get("blocked"):
+        return "generate_final_report"
+
     if state.get("turn_count", 0) >= MAX_TURNS:
         return "generate_final_report"
 

@@ -1,0 +1,14 @@
+feat: FinGraph Insight final PPT (18 slides) & layout fixes
+
+- Dept name: AI Software Engineering (footer & title slide)
+- Slide count 19->18: removed Live Demo slide, added video placeholder
+- Slide 3: problem card overlap fix
+- Slide 5: bar chart % label overlap fix
+- Slide 8: Reflexion loop arrow direction + MAX x2 badge
+- Slide 10: 4-layer security box overlap fix
+- Slide 12: RAGAS Gate panel overlap fix
+- Slide 14: Sprint % icon overlap fix
+- Slide 15: video placeholder (2 videos, Ops/CI-CD)
+- Slide 17: roadmap numbered badge + layout
+- Slide 18: conclusion bottom box visibility
+- All source code changes included

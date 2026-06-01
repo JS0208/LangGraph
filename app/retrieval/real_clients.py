@@ -12,18 +12,74 @@ VECTOR_SIZE = 768
 # Qdrant 가 다운됐을 때 실패를 빨리 감지해 회로 차단·폴백으로 넘긴다 (초).
 _QDRANT_TIMEOUT = httpx.Timeout(5.0, connect=2.5)
 COMPANY_ALIAS_MAP = {
+    # Samsung Electronics
     "삼성전자": "삼성전자",
+    "samsung": "삼성전자",
     "samsungelectronics": "삼성전자",
+    # SK Hynix
     "sk하이닉스": "SK하이닉스",
     "sk hynix": "SK하이닉스",
     "skhynix": "SK하이닉스",
+    "하이닉스": "SK하이닉스",
+    "hynix": "SK하이닉스",
+    # NAVER
     "네이버": "NAVER",
     "naver": "NAVER",
+    # Kakao
     "카카오": "카카오",
     "kakao": "카카오",
+    # LG CNS
     "lg cns": "LG CNS",
     "lgcns": "LG CNS",
     "엘지cns": "LG CNS",
+    # LG Electronics
+    "lg전자": "LG전자",
+    "lg electronics": "LG전자",
+    "lgelectronics": "LG전자",
+    # Hyundai Motor
+    "현대자동차": "현대자동차",
+    "현대차": "현대자동차",
+    "hyundai": "현대자동차",
+    "hyundaimotors": "현대자동차",
+    "hyundai motor": "현대자동차",
+    # Kia
+    "기아": "기아",
+    "기아자동차": "기아",
+    "kia": "기아",
+    # POSCO
+    "포스코": "POSCO",
+    "posco": "POSCO",
+    "pohang": "POSCO",
+    # Celltrion
+    "셀트리온": "셀트리온",
+    "celltrion": "셀트리온",
+    # KB Financial
+    "kb금융": "KB금융",
+    "kb financial": "KB금융",
+    "kbfinancial": "KB금융",
+    "국민은행": "KB금융",
+    # Shinhan Financial
+    "신한금융": "신한금융",
+    "shinhan": "신한금융",
+    "shinhanfinancial": "신한금융",
+    # SK Telecom
+    "sk텔레콤": "SK텔레콤",
+    "skt": "SK텔레콤",
+    "sk telecom": "SK텔레콤",
+    # KT
+    "kt": "KT",
+    "케이티": "KT",
+    # LG Uplus
+    "lg유플러스": "LG유플러스",
+    "lgu+": "LG유플러스",
+    "lg uplus": "LG유플러스",
+    # Kakao Bank
+    "카카오네지": "KakaoBank",
+    "kakaobank": "KakaoBank",
+    "kakao bank": "KakaoBank",
+    # Krafton
+    "크래프톤": "크래프톤",
+    "krafton": "크래프톤",
 }
 
 
@@ -199,20 +255,18 @@ async def qdrant_search(
     return normalized
 
 
+
 async def neo4j_two_hop(
     uri: str,
     user: str,
     password: str,
     company: str | None,
-) -> dict[str, Any]:
+) -> dict:
     if not company:
         return {"nodes": [], "edges": []}
-
     if importlib.util.find_spec("neo4j") is None:
         raise RuntimeError("neo4j package is not installed")
-
     from neo4j import AsyncGraphDatabase
-
     query = (
         "MATCH p=(c:Company {name: $name})-[*1..2]-(n) "
         "UNWIND relationships(p) AS rel "
@@ -231,23 +285,58 @@ async def neo4j_two_hop(
         await driver.close()
 
 
-def extract_company_year(user_query: str) -> tuple[str | None, int | None]:
+async def neo4j_adaptive_hop(
+    uri: str,
+    user: str,
+    password: str,
+    company: str | None,
+    *,
+    max_depth: int = 4,
+    min_nodes: int = 5,
+) -> dict:
+    """Adaptive hop traversal -- expands depth until sufficient evidence found."""
+    if not company:
+        return {"nodes": [], "edges": [], "hop_depth_used": 0}
+    if importlib.util.find_spec("neo4j") is None:
+        raise RuntimeError("neo4j package is not installed")
+    from neo4j import AsyncGraphDatabase
+    driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
+    best_result: dict = {"nodes": [company], "edges": [], "hop_depth_used": 1}
+    try:
+        async with driver.session() as session:
+            for depth in range(1, max_depth + 1):
+                cypher = (
+                    "MATCH p=(c:Company {name: $name})-[*1.." + str(depth) + "]-(n) "
+                    "UNWIND relationships(p) AS rel "
+                    "RETURN collect(DISTINCT c.name) + collect(DISTINCT n.name) AS nodes, "
+                    "collect(DISTINCT type(rel))[..30] AS edges"
+                )
+                rec = await session.run(cypher, name=company)
+                row = await rec.single()
+                if not row:
+                    break
+                nodes = row.get("nodes") or [company]
+                edges = row.get("edges") or []
+                best_result = {"nodes": nodes, "edges": edges, "hop_depth_used": depth}
+                if len(nodes) >= min_nodes:
+                    break
+    finally:
+        await driver.close()
+    return best_result
+
+
+def extract_company_year(user_query: str) -> tuple:
     return _extract_company_and_year(user_query)
 
 
-def extract_companies(user_query: str) -> list[str]:
-    """질의에 등장하는 모든 회사 (canonical) 목록을 등장 순서대로 반환.
-
-    동일 회사를 중복 제거하고, alias 매칭은 길이가 긴 alias 우선이다.
-    multi-entity 비교 시나리오 (ex: "삼성전자와 SK하이닉스의 …") 의
-    sub_query 분해를 위해 사용된다.
-    """
+def extract_companies(user_query: str) -> list:
+    """Return all canonical company names found in the query."""
     if not user_query:
         return []
     lowered = user_query.lower()
     normalized = _normalize_company_text(user_query)
-    found: list[str] = []
-    seen: set[str] = set()
+    found: list = []
+    seen: set = set()
     for alias, canonical in sorted(COMPANY_ALIAS_MAP.items(), key=lambda item: len(item[0]), reverse=True):
         if canonical in seen:
             continue

@@ -7,7 +7,19 @@ from typing import Any, Dict, Iterable
 
 from app.config import settings
 from app.observability.metrics import counter_inc
-from app.retrieval.real_clients import extract_company_year, neo4j_two_hop, qdrant_search
+import os
+
+from app.retrieval.real_clients import extract_company_year, neo4j_adaptive_hop, neo4j_two_hop, qdrant_search
+from app.retrieval.real_clients import extract_companies as _extract_companies
+from app.retrieval.multi_entity import (
+    is_comparison_query,
+    extract_per_company_years,
+    parallel_qdrant_search,
+    parallel_neo4j_hop,
+)
+
+# 적응형 hop 활성화 여부 (환경변수로 제어, 기본 활성화)
+_ADAPTIVE_HOP_ENABLED = os.getenv("ADAPTIVE_HOP_ENABLED", "1").strip() not in ("0", "false", "no")
 from app.retrieval.query_planner import plan_query
 from app.retrieval.reranker import rerank as _rerank_hits
 from app.schemas import Evidence, QueryPlan
@@ -167,13 +179,27 @@ async def _run_real_retrieval(
         counter_inc("retrieval_errors_total", 1.0, {"target": "qdrant"})
 
     try:
-        graph_results = await NEO4J_BREAKER.acall(
-            neo4j_two_hop,
-            uri=settings.neo4j_uri,
-            user=settings.neo4j_user,
-            password=settings.neo4j_password,
-            company=company,
-        )
+        if _ADAPTIVE_HOP_ENABLED:
+            # 적응형 hop: 증거가 충분해질 때까지 hop 깊이 자동 확장 (최대 4-hop)
+            graph_results = await NEO4J_BREAKER.acall(
+                neo4j_adaptive_hop,
+                uri=settings.neo4j_uri,
+                user=settings.neo4j_user,
+                password=settings.neo4j_password,
+                company=company,
+                max_depth=4,
+                min_nodes=5,
+            )
+            hop_used = graph_results.get("hop_depth_used", 2)
+            counter_inc("retrieval_hop_depth_total", float(hop_used), {"company": company or "unknown"})
+        else:
+            graph_results = await NEO4J_BREAKER.acall(
+                neo4j_two_hop,
+                uri=settings.neo4j_uri,
+                user=settings.neo4j_user,
+                password=settings.neo4j_password,
+                company=company,
+            )
     except CircuitOpenError:
         logger.warning("neo4j 회로 차단 — fallback 사용")
         counter_inc("circuit_breaker_open_total", 1.0, {"target": "neo4j"})
@@ -330,4 +356,112 @@ async def hybrid_retrieve(
     }
 
 
-__all__ = ["hybrid_retrieve"]
+
+async def hybrid_retrieve_multi(
+    user_query: str,
+    *,
+    companies: list[str],
+    plan: "QueryPlan | None" = None,
+) -> "Dict[str, Any]":
+    """Parallel retrieval for multi-entity (comparison) queries.
+
+    Runs qdrant_search and neo4j hop concurrently for each company,
+    merges results, and returns the same dict shape as hybrid_retrieve().
+    Falls back to hybrid_retrieve() for single-company or no-company queries.
+    """
+    if len(companies) < 2:
+        company = companies[0] if companies else None
+        _, year = extract_company_year(user_query)
+        return await hybrid_retrieve(user_query, company=company, year=year, plan=plan)
+
+    if plan is None:
+        plan = await plan_query(user_query)
+
+    year_map = extract_per_company_years(user_query, companies)
+
+    vector_results: list[dict] = []
+    graph_results: dict = {"nodes": [], "edges": []}
+
+    if settings.use_real_retrieval:
+        import asyncio as _asyncio
+
+        async def _vec() -> list[dict]:
+            try:
+                return await QDRANT_BREAKER.acall(
+                    parallel_qdrant_search,
+                    user_query=user_query,
+                    companies=companies,
+                    year_map=year_map,
+                    qdrant_url=settings.qdrant_url,
+                    api_key=settings.qdrant_api_key,
+                    collection=settings.qdrant_collection,
+                    limit_per_company=5,
+                )
+            except Exception as exc:
+                logger.warning("multi-entity qdrant failed: %s", exc)
+                return []
+
+        async def _graph() -> dict:
+            try:
+                return await NEO4J_BREAKER.acall(
+                    parallel_neo4j_hop,
+                    companies=companies,
+                    uri=settings.neo4j_uri,
+                    user=settings.neo4j_user,
+                    password=settings.neo4j_password,
+                    max_depth=2,
+                )
+            except Exception as exc:
+                logger.warning("multi-entity neo4j failed: %s", exc)
+                return {"nodes": [], "edges": []}
+
+        vector_results, graph_results = await _asyncio.gather(_vec(), _graph())
+
+        if len(vector_results) > 1:
+            try:
+                vector_results = _rerank_hits(
+                    user_query, vector_results,
+                    top_k=max(10, min(30, len(vector_results))),
+                    intent=plan.overall_intent,
+                )
+            except Exception as exc:
+                logger.warning("multi-entity rerank failed: %s", exc)
+
+    # Use first company as primary for analysis_context
+    primary_company = companies[0]
+    primary_year = year_map.get(primary_company)
+
+    analysis_context = _build_analysis_context(
+        company=primary_company,
+        year=primary_year,
+        vector_results=vector_results,
+        graph_results=graph_results,
+        mode="real_multi" if settings.use_real_retrieval and vector_results else "fallback_multi",
+        plan=plan,
+    )
+    # Inject all companies into context for downstream nodes
+    analysis_context["comparison_companies"] = companies
+    analysis_context["year_map"] = {k: v for k, v in year_map.items() if v}
+
+    evidence = _hits_to_evidence(vector_results) + _graph_to_evidence(graph_results, primary_company)
+    mode = analysis_context["data_quality"]["mode"]
+
+    return {
+        "query": user_query,
+        "vector_results": vector_results,
+        "graph_results": graph_results,
+        "raw": {
+            "name": primary_company,
+            "year": primary_year or 0,
+            "financial_facts": analysis_context["financial_facts"],
+            "data_quality": analysis_context["data_quality"],
+        },
+        "analysis_context": analysis_context,
+        "mode": mode,
+        "evidence": evidence,
+        "plan": plan.model_dump(),
+        "companies": companies,
+    }
+
+
+__all__ = ["hybrid_retrieve", "hybrid_retrieve_multi"]

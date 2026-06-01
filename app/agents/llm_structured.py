@@ -1,18 +1,11 @@
-"""구조화 LLM 추출기 — Sprint 1 리팩터.
-
-변경점
-- 모든 외부 LLM 호출은 ``LLMRouter`` 를 거친다 (`app/llm/router.py`).
-- 키가 비어 있는 fallback 경로의 결과는 **거동/포맷 모두 기존과 동일**.
-- 실 LLM 경로의 결과 또한 기존과 동일한 dict / list 포맷을 반환한다.
-- 신규 Pydantic 모델(`FinanceMetrics` 등)은 점진적 도입을 위해 어댑터 함수로만 노출한다.
-"""
-
+"""Structured LLM extractors using PromptRegistry — with real-time token streaming."""
 from __future__ import annotations
 
 import json
 import logging
 from typing import Any
 
+from app.agents.streaming import active_thread, put_token
 from app.config import settings
 from app.llm.providers.base import LLMRequest
 from app.llm.router import LLMRouter, get_router
@@ -20,43 +13,50 @@ from app.llm.router import LLMRouter, get_router
 logger = logging.getLogger(__name__)
 
 
-def _build_finance_prompt(analysis_context: dict[str, Any]) -> str:
-    return (
-        "당신은 재무 분석가입니다. 아래 analysis_context만 근거로 판단하세요. "
-        "질문 연도와 회사에 해당하는 정보만 우선 사용하고, 데이터가 비어 있거나 0이어도 "
-        "data_quality.flags에 missing/failed/partial이 있으면 실제 값이 아니라 누락 가능성으로 해석하세요. "
-        "근거 없는 추정, 과장, 단정은 금지합니다. "
-        "출력은 JSON 객체만 허용합니다. 키는 debt_ratio(숫자), insight(문자열), "
-        "has_sufficient_data(불리언), data_quality(문자열)만 포함하세요. "
-        "insight는 1~2문장으로 작성하고, 데이터가 부족하면 그 사실을 먼저 밝히세요. "
-        f"analysis_context: {json.dumps(analysis_context, ensure_ascii=False)}"
-    )
+def _build_finance_prompt(analysis_context: dict) -> str:
+    try:
+        from app.prompts import get_registry
+        return get_registry().render(
+            "finance_metrics",
+            analysis_context=json.dumps(analysis_context, ensure_ascii=False),
+        )
+    except Exception:
+        return (
+            "You are a financial analyst. Use only the analysis_context below.\n"
+            "Output JSON only with keys: debt_ratio(number), insight(string), "
+            "has_sufficient_data(bool), data_quality(string).\n"
+            "analysis_context: " + json.dumps(analysis_context, ensure_ascii=False)
+        )
 
 
-def _build_risk_prompt(analysis_context: dict[str, Any]) -> str:
-    return (
-        "당신은 리스크 분석가입니다. 아래 analysis_context 중 key_disclosures와 data_quality만 근거로 판단하세요. "
-        "구체적 공시 근거가 없는 일반론적 경고는 쓰지 마세요. "
-        "데이터가 부족하면 '공시 정보가 충분하지 않다'는 식의 신중한 문장 1개만 반환할 수 있습니다. "
-        "출력은 JSON 배열(Array)만 허용합니다. 각 항목은 짧고 구체적인 리스크 문장이어야 합니다. "
-        f"analysis_context: {json.dumps(analysis_context, ensure_ascii=False)}"
-    )
+def _build_risk_prompt(analysis_context: dict) -> str:
+    try:
+        from app.prompts import get_registry
+        return get_registry().render(
+            "risk_points",
+            analysis_context=json.dumps(analysis_context, ensure_ascii=False),
+        )
+    except Exception:
+        return (
+            "You are a risk analyst. Use only key_disclosures and data_quality.\n"
+            "Output JSON array only. Each item is a concise risk sentence.\n"
+            "analysis_context: " + json.dumps(analysis_context, ensure_ascii=False)
+        )
 
 
 def _strip_json_envelope(text: str) -> str:
     return text.strip().strip("```json").strip("```").strip()
 
 
-def _fallback_finance(analysis_context: dict[str, Any]) -> dict[str, Any]:
-    """기존 fallback 거동(키 없는 환경)을 그대로 보존."""
+def _fallback_finance(analysis_context: dict) -> dict:
     financial_facts = analysis_context.get("financial_facts", {})
     data_quality = analysis_context.get("data_quality", {})
     debt_ratio = financial_facts.get("debt_ratio", 0) or 0
     flags = data_quality.get("flags", [])
     if not financial_facts.get("has_financial_data") or "financial_parse_failed" in flags:
-        insight = "재무 데이터가 충분하지 않아 정량 판단을 보류해야 합니다."
+        insight = "Financial data is insufficient for quantitative judgment."
     else:
-        insight = "부채비율 안정" if debt_ratio < 150 else "부채비율 상승으로 재무 리스크 존재"
+        insight = "Debt ratio stable" if debt_ratio < 150 else "Debt ratio elevated -- financial risk exists"
     return {
         "debt_ratio": debt_ratio,
         "insight": insight,
@@ -66,75 +66,84 @@ def _fallback_finance(analysis_context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _fallback_risk(analysis_context: dict[str, Any]) -> list[str]:
+def _fallback_risk(analysis_context: dict) -> list:
     disclosures = analysis_context.get("key_disclosures", [])
-    items = [f"{d.get('event_type')}: {d.get('summary')}" for d in disclosures]
-    return items or ["중대 공시 리스크 미탐지"]
+    items = ["{}: {}".format(d.get("event_type"), d.get("summary")) for d in disclosures]
+    return items or ["No significant disclosure risk detected"]
+
+
+async def _stream_to_buffer(
+    router: LLMRouter,
+    intent: str,
+    request: LLMRequest,
+    node_name: str,
+) -> str:
+    """Stream tokens from LLM, push each token to SSE buffer, return full text.
+
+    Falls back to router.invoke() if streaming fails or thread_id is unset.
+    """
+    thread_id = active_thread()
+    full_text = ""
+    try:
+        async for token in router.stream(intent, request):
+            full_text += token
+            if thread_id:
+                put_token(thread_id, node_name, token)
+        return full_text
+    except Exception as exc:
+        logger.warning("streaming failed for intent %s (%s) -- invoke fallback", intent, exc)
+        # Fallback to blocking invoke
+        response = await router.invoke(intent, request)
+        return response.text
 
 
 async def extract_finance_metrics(
-    context: dict[str, Any],
+    context: dict,
     *,
     router: LLMRouter | None = None,
-) -> dict[str, Any]:
-    """재무 지표 추출. 키 없는 환경에서는 fallback 출력을 그대로 반환."""
+) -> dict:
     analysis_context = context.get("analysis_context", {})
-
     if not settings.has_real_llm:
         return _fallback_finance(analysis_context)
-
     router = router or get_router()
-    request = LLMRequest(
-        prompt=_build_finance_prompt(analysis_context),
-        temperature=0.0,
-        json_mode=True,
-    )
+    request = LLMRequest(prompt=_build_finance_prompt(analysis_context), temperature=0.0, json_mode=True)
     try:
-        response = await router.invoke("finance_metrics", request)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("finance LLM 호출 실패 (%s) — fallback 으로 전환", exc)
+        raw_text = await _stream_to_buffer(router, "finance_metrics", request, "finance_analyst")
+    except Exception as exc:
+        logger.warning("finance LLM call failed (%s) -- fallback", exc)
         return _fallback_finance(analysis_context)
-
     try:
-        parsed: dict[str, Any] = json.loads(_strip_json_envelope(response.text))
+        parsed: dict = json.loads(_strip_json_envelope(raw_text))
         parsed["source"] = "real_llm" if router.select_provider("finance_metrics").name != "mock" else "mock"
         return parsed
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("finance JSON 파싱 실패 (%s) — raw text 로 회귀", exc)
-        return {"debt_ratio": 0, "insight": response.text, "source": "parse_error"}
+    except Exception as exc:
+        logger.warning("finance JSON parse failed (%s) -- raw text", exc)
+        return {"debt_ratio": 0, "insight": raw_text, "source": "parse_error"}
 
 
 async def extract_risk_points(
-    context: dict[str, Any],
+    context: dict,
     *,
     router: LLMRouter | None = None,
-) -> list[str]:
-    """리스크 포인트 추출. 키 없는 환경에서는 fallback 출력을 그대로 반환."""
+) -> list:
     analysis_context = context.get("analysis_context", {})
-
     if not settings.has_real_llm:
         return _fallback_risk(analysis_context)
-
     router = router or get_router()
-    request = LLMRequest(
-        prompt=_build_risk_prompt(analysis_context),
-        temperature=0.0,
-        json_mode=True,
-    )
+    request = LLMRequest(prompt=_build_risk_prompt(analysis_context), temperature=0.0, json_mode=True)
     try:
-        response = await router.invoke("risk_points", request)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("risk LLM 호출 실패 (%s) — fallback 으로 전환", exc)
+        raw_text = await _stream_to_buffer(router, "risk_points", request, "risk_compliance")
+    except Exception as exc:
+        logger.warning("risk LLM call failed (%s) -- fallback", exc)
         return _fallback_risk(analysis_context)
-
     try:
-        parsed = json.loads(_strip_json_envelope(response.text))
+        parsed = json.loads(_strip_json_envelope(raw_text))
         if isinstance(parsed, list):
             return [str(item) for item in parsed]
-        return [response.text]
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("risk JSON 파싱 실패 (%s) — raw text 로 회귀", exc)
-        return [response.text] if response.text else ["리스크 응답 없음"]
+        return [raw_text]
+    except Exception as exc:
+        logger.warning("risk JSON parse failed (%s) -- raw text", exc)
+        return [raw_text] if raw_text else ["No risk response"]
 
 
 __all__ = ["extract_finance_metrics", "extract_risk_points"]

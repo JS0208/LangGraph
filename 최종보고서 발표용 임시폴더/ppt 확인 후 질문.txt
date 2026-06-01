@@ -1,0 +1,31 @@
+NFR? 7sprint? prometheus? OTel?
+
+ragas 목표 값이란?
+
+TTFU p95? -> sse 스트리밍 구현으로 측정값 칸에 적혀 있는 거?
+
+fallback 성공률은 왜 99%?
+
+docker compose up? 현재 측정값에 github actions CI?
+
+pydantic? router?
+
+agent mesh?
+
+ops?
+
+· 3-Pane Dashboard ·?
+
+SSE Consumer · ?
+· JWT Auth ?
+· Audit Log · asyncio Queue?
+Prometheus /metrics  ·  OTel span shim  ·  structlog JSON  ·  GitHub Actions CI?
+
+ppt 9번, 10, 11, 12번 슬라이드 전체.
+
+13번 슬라이드의 각각 평가한 방법.
+
+이미 제출했는데 5번이랑 14번 슬라이드가 사실상 중복이네.
+의도한 바인거 처럼 자연스레 발표 자료를 준비해야 겠어.
+
+17번 슬라이드 전체.
